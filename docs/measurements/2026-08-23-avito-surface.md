@@ -271,3 +271,32 @@ chosen should be measured against real titles before its threshold is trusted.
 Verified extraction from the real item page: id 7775028313, price 26 490 ₽ → 2 649 000 minor,
 **ViewsTotal 14947 and ViewsToday 21** — views are public and cost one request, exactly as
 measured during discovery.
+
+## 18. The SDK already has the 403 remedy
+
+Read before copying, and it removes an extension the spec had specified.
+
+`blanktrail.Lease.RenewIdentity(ctx)` rotates the port's profile
+(`POST /api/v1/port/{n}/rotate`), closes its idle connections, bumps the session the caller
+keys its visit identity on, and resets the port's consecutive-failure count — all while keeping
+the exit address. Its own doc comment states the part that was thought to be missing:
+
+> The cookie jar goes with it, because the proxy discards a solved challenge whenever the
+> fingerprint changes.
+
+So a fresh jar comes from rotating the fingerprint, not from closing and reopening the port.
+The specified `Lease.Recycle` — which would have extracted `renewIfDue`'s close/open/rotate
+sequence — is unnecessary, and it would have been three control calls where one does.
+
+Two further facts, both checked rather than assumed:
+
+- The `blanktrail` package's non-test code depends on **nothing outside the standard library**.
+  Copying it into this project costs no dependency at all. Only its tests reach outside, to
+  `internal/testutil/fakebt` (437 lines), which is stdlib-only too.
+- `DefaultAttemptsPerEgress = 3` is **not** in the SDK. It is `wb.RetryPolicy`'s, in the domain
+  layer this project writes fresh, so "deleted rather than retuned" means the field is simply
+  never introduced — there is nothing in the vendored package to remove.
+
+The vendor's claim that rotation discards the jar is theirs about their own proxy. It is taken
+as true here and checked in the soak run, where a rotate followed by a request that still
+carries the old clearance would show up as an unexplained pass.
