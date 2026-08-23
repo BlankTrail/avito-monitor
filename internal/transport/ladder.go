@@ -175,6 +175,19 @@ func (f *Fetcher) Fetch(ctx context.Context, target string) (Result, error) {
 			Class: res.Verdict.Class, Status: status,
 			Remedy: res.Verdict.Class.Remedy(),
 		})
+		// Keep the body for anything the design did not anticipate, so the next
+		// occurrence is legible rather than another line in a log.
+		//
+		// A soak run turned up a 302 that no measurement describes. It reached
+		// the classifier at all only because Go returns a 3xx unfollowed when
+		// its Location is missing or unusable, and it was then classified by
+		// accident: the extractor failed on the redirect body, which lands in
+		// ClassSoftBlock through the ErrNoExtractor branch. There is no 3xx
+		// branch in the table. Rather than invent what a redirect means, keep
+		// what it said.
+		if status >= 300 && status < 400 || res.Verdict.Class == ClassOther {
+			res.Body = body
+		}
 
 		switch res.Verdict.Class {
 		case ClassOK, ClassEmpty:

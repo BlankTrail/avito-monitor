@@ -236,6 +236,16 @@ func run(args []string) error {
 		if err := enc.Encode(r); err != nil {
 			return err
 		}
+		// A body the ladder chose to keep is a response nothing in the design
+		// explains. Write it out: the alternative is reading "soft-block/302"
+		// in a summary six weeks from now with no way to find out what it was.
+		if len(res.Body) > 0 {
+			name := fmt.Sprintf("%s/unexplained-%s-%03d-%d.html",
+				strings.TrimRight(*out, "/\\"), *arm, i, res.Status)
+			if werr := os.WriteFile(name, res.Body, 0o644); werr == nil {
+				fmt.Printf("      kept the body: %s\n", name)
+			}
+		}
 		note := ""
 		if r.Pushback {
 			note = "  PUSHBACK " + strings.Join(r.Trace, " -> ")
