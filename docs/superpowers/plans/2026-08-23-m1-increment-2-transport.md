@@ -3699,7 +3699,7 @@ MSG
 - Consumes: `transport.*`, `bt.*`, `direct.*`, `avito.*`.
 - Produces: the binary, and the increment's demonstrable behaviour.
 
-- [ ] **Step 1: Write it**
+- [x] **Step 1: Write it**
 
 `avitomon fetch [-mode direct|blanktrail] [-surface mobile|desktop] [-control URL] [-key K] [-ports N] [-proxies FILE] [-state FILE] <url>` prints one line of `class`, `rule`, `path`, `listings`, `total`, `session`, `label`, `attempts`, and then the first few listings — the same shape `avitoparse` prints, so the two are comparable at a glance.
 
@@ -3708,7 +3708,7 @@ Two rules the command must follow:
 - **The API key never reaches a file this program writes.** It comes from `-key` or from `AVITOMON_BLANKTRAIL_KEY`, and it is never echoed, never logged and never included in an error. The spec puts it in a settings column the panel does not display; here it is an argument that goes nowhere.
 - **A halt exits non-zero and prints the boundary message**, naming the status, the marker, the URL and the fact that BlankTrail is what passes it. That message is the product's main sales moment and it should read like an explanation rather than an advertisement.
 
-- [ ] **Step 2: The demonstrable behaviour, run**
+- [x] **Step 2: The demonstrable behaviour, run**
 
 ```bash
 cd S:/Projects/Avito_Go && go build ./... && go run ./cmd/avitomon fetch -mode direct \
@@ -3725,7 +3725,7 @@ cd S:/Projects/Avito_Go && AVITOMON_BLANKTRAIL_KEY=<key> go run ./cmd/avitomon f
 
 Expected: `class=ok`, thirty listings, `label=blanktrail:200NN`.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 cd S:/Projects/Avito_Go && git add cmd/avitomon/ docs/measurements/ && git commit -m "$(cat <<'MSG'
