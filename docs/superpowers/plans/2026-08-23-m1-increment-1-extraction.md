@@ -3797,10 +3797,19 @@ func TestMutationEntityInTitle(t *testing.T) {
 	const marker = "Ремонт &amp; отделка"
 	after, err := mutateFixture(t, "desktop-canonical-p1", func(b []byte) []byte {
 		// Rewrite the first title in the state block, entities and all.
-		i := bytes.Index(b, []byte(`"title":"`))
-		if i < 0 {
-			t.Fatal(`no "title": in the fixture`)
+		// Anchor on the first urlPath, not on the first title: the earliest
+		// "title" in this document is «Показать большие фото», a control's
+		// label, and injecting there would test nothing while looking as
+		// though it had.
+		u := bytes.Index(b, []byte(`"urlPath":"`))
+		if u < 0 {
+			t.Fatal(`no "urlPath": in the fixture`)
 		}
+		i := bytes.Index(b[u:], []byte(`"title":"`))
+		if i < 0 {
+			t.Fatal(`no "title": after the first listing's urlPath`)
+		}
+		i += u
 		start := i + len(`"title":"`)
 		end := bytes.IndexByte(b[start:], '"')
 		if end < 0 {
