@@ -175,8 +175,23 @@ func (f *Fetcher) Fetch(ctx context.Context, target string) (Result, error) {
 			Class: res.Verdict.Class, Status: status,
 			Remedy: res.Verdict.Class.Remedy(),
 		})
-		// Keep the body for anything the design did not anticipate, so the next
-		// occurrence is legible rather than another line in a log.
+		// Keep the body for anything the design did not anticipate, and for the
+		// two refusals whose meaning is now in question, so the next occurrence
+		// is legible rather than another line in a log.
+		//
+		// A soak run showed 403 and 429 behave as opposites, which the table
+		// does not reflect. Eighteen of eighteen 403s cleared by waiting.
+		// Sixty-six consecutive 429s, across eleven fetches and about fifteen
+		// minutes of backoff each, cleared none — the only two that recovered
+		// did so through a 302, which is how a challenge flow ends. A 429 looks
+		// like a challenge being presented rather than a rate limit, and the
+		// classifier calls it "throttled" and answers it with a backoff that
+		// cannot work.
+		//
+		// Neither branch is changed here. The captcha markers did not fire on
+		// those bodies, so either the marker set is short or a 429 challenge
+		// page does not look like the one that was measured. That is a question
+		// about a body nobody kept.
 		//
 		// A soak run turned up a 302 that no measurement describes. It reached
 		// the classifier at all only because Go returns a 3xx unfollowed when
@@ -185,7 +200,8 @@ func (f *Fetcher) Fetch(ctx context.Context, target string) (Result, error) {
 		// ClassSoftBlock through the ErrNoExtractor branch. There is no 3xx
 		// branch in the table. Rather than invent what a redirect means, keep
 		// what it said.
-		if status >= 300 && status < 400 || res.Verdict.Class == ClassOther {
+		if status >= 300 && status < 400 || res.Verdict.Class == ClassOther ||
+			status == 429 || status == 403 {
 			res.Body = body
 		}
 
