@@ -119,20 +119,41 @@ var captchaLabels = map[string]bool{
 func Classify(in Input) Verdict {
 	wall, hasWall := in.Doc.Wall()
 
-	// A captcha marker at any status is a challenge, and 439 is Avito's own
-	// challenge status — it appears in no RFC.
-	if in.Status == 439 || (hasWall && captchaLabels[wall.Label]) {
-		return Verdict{ClassChallenge, wall, "captcha marker or 439"}
+	// 439 is Avito's own challenge status and appears in no RFC.
+	if in.Status == 439 {
+		return Verdict{ClassChallenge, wall, "status 439"}
 	}
 
 	switch in.Status {
 	case 429:
 		// The measured cold baseline is a 429 whose body carries a wall marker,
 		// on an identity that has never warmed up. It is the state the whole
-		// warm-jar design exists to leave, not a wall to stop at.
+		// warm-jar design exists to leave, not a wall to stop at — and it is
+		// checked BEFORE the captcha scan below, because a cold 429 that
+		// happens to carry a captcha marker still wants a warm-up first, and
+		// reading it as a challenge would leave this mode unable to start.
 		if hasWall && !in.Warm {
 			return Verdict{ClassCold, wall, "unwarmed identity refused; warm up and retry"}
 		}
+	}
+
+	// A captcha marker at any status is a challenge, and every marker counts,
+	// not merely the first one the wall scan happened to return.
+	//
+	// Measured: a live 429 carried "проблема с ип", "geetest" and
+	// "firewallCaptcha" together. Wall() returns markers in table order and the
+	// IP one is listed first, so a test of that single label found no captcha
+	// and a page whose whole purpose was to present a slider was filed as a
+	// rate limit — and then answered with a backoff, sixty-six times, none of
+	// which could work.
+	for _, w := range in.Doc.Walls() {
+		if captchaLabels[w.Label] {
+			return Verdict{ClassChallenge, w, "captcha marker " + w.Marker}
+		}
+	}
+
+	switch in.Status {
+	case 429:
 		return Verdict{ClassThrottled, wall, "throttled"}
 	case 403:
 		return Verdict{ClassBurned, wall, "this identity is finished on this address"}

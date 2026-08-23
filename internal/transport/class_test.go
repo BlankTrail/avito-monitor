@@ -200,3 +200,91 @@ func readFixture(t *testing.T, name string) []byte {
 	}
 	return b
 }
+
+// readLocalFixture reads a capture this package keeps for itself, as opposed to
+// increment 1's extraction fixtures.
+func readLocalFixture(t *testing.T, name string) []byte {
+	t.Helper()
+	f, err := os.Open(filepath.Join("testdata", name+".html.gz"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	zr, err := gzip.NewReader(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer zr.Close()
+	b, err := io.ReadAll(zr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
+// TestALive429IsAChallenge is the regression for the most expensive
+// misclassification this design has made.
+//
+// The body is a real 429 captured from m.avito.ru. It carries three markers at
+// once — "проблема с ip", "geetest" and "firewallCaptcha" — and Document.Wall
+// returns them in table order, so the IP one comes back. The classifier used to
+// test that single label for captcha-ness, find none, and file a page whose
+// whole purpose was to present a Geetest slider as a rate limit.
+//
+// The cost of that was not academic. A rate limit is answered by waiting, so
+// the ladder waited: sixty-six consecutive 429s, eleven fetches, about fifteen
+// minutes each, none of which cleared, because no amount of waiting solves a
+// captcha.
+func TestALive429IsAChallenge(t *testing.T) {
+	body := readLocalFixture(t, "live-429-captcha")
+
+	doc := avito.Document{
+		Surface: avito.SurfaceMobile,
+		URL:     "https://m.avito.ru/all?q=iphone+15&s=104",
+		Body:    body,
+	}
+
+	// The premise: the page really does carry both markers.
+	labels := map[string]bool{}
+	for _, w := range doc.Walls() {
+		labels[w.Label] = true
+	}
+	if !labels[avito.LabelIPBlock] || !labels[avito.LabelGeetest] {
+		t.Fatalf("fixture no longer carries both markers: %v — this test is "+
+			"about a page that is two things at once", labels)
+	}
+	if first, ok := doc.Wall(); !ok || first.Label != avito.LabelIPBlock {
+		t.Fatalf("Wall() = %+v; the trap is that the IP marker is returned "+
+			"first and it is not the captcha one", first)
+	}
+
+	page, extractErr := avito.Extract(doc, avito.Options{Now: 0})
+	v := Classify(Input{Status: 429, Doc: doc, Page: page, ExtractErr: extractErr, Warm: true})
+
+	if v.Class != ClassChallenge {
+		t.Fatalf("class = %q, want %q — this is a Geetest page, and waiting "+
+			"does not solve a captcha", v.Class, ClassChallenge)
+	}
+	if v.Class.Remedy() != RemedyRetrySame {
+		t.Errorf("remedy = %v; a challenge is repeated on the same identity "+
+			"where there is a solver, and halted where there is not",
+			v.Class.Remedy())
+	}
+}
+
+// TestAColdRefusalStillWarmsUpEvenIfItLooksLikeACaptcha. The captcha scan runs
+// after the cold check on purpose: an identity that has never warmed up is
+// expected to be refused, and reading that as a challenge would leave direct
+// mode unable to start at all.
+func TestAColdRefusalStillWarmsUpEvenIfItLooksLikeACaptcha(t *testing.T) {
+	body := readLocalFixture(t, "live-429-captcha")
+	doc := avito.Document{Surface: avito.SurfaceMobile, URL: "https://m.avito.ru/all?q=x", Body: body}
+	page, extractErr := avito.Extract(doc, avito.Options{Now: 0})
+
+	v := Classify(Input{Status: 429, Doc: doc, Page: page, ExtractErr: extractErr, Warm: false})
+	if v.Class != ClassCold {
+		t.Errorf("class = %q on an unwarmed identity, want %q — the warm-up is "+
+			"the first thing to try, and it is a root navigation that may "+
+			"clear this by itself", v.Class, ClassCold)
+	}
+}
