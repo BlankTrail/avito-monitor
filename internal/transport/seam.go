@@ -29,6 +29,13 @@ type Lease interface {
 	// Profile says who owns which header for this lease.
 	Profile() Profile
 
+	// Warm reports whether this identity has completed a warm-up. Only the
+	// transport knows, and the classifier needs it: the measured cold baseline
+	// is a 429 carrying wall markers, which means "warm up" before a warm-up
+	// and "you are being throttled" after one. Guessing it from the attempt
+	// number would make ClassCold either unreachable or permanent.
+	Warm() bool
+
 	// RotateEgress replaces the exit address and keeps the identity. Reachable
 	// from exactly one branch of the ladder, ClassThrottled, and a test
 	// enforces that.

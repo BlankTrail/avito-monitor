@@ -241,6 +241,13 @@ func (x *sessionLease) Session() string            { return x.s.Session() }
 func (x *sessionLease) Label() string              { return x.s.Label() }
 func (x *sessionLease) Profile() transport.Profile { return x.s.fp.Profile() }
 
+// Warm is what the classifier reads to tell a cold start from a throttle.
+func (x *sessionLease) Warm() bool {
+	x.s.mu.Lock()
+	defer x.s.mu.Unlock()
+	return x.s.warm
+}
+
 // Do takes the session's mutex for the whole request.
 //
 // One request in flight per identity, and not one per process. Two concurrent

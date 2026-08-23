@@ -180,3 +180,9 @@ type portLease struct {
 func (p *portLease) Label() string { return "blanktrail:" + strconv.Itoa(p.Port()) }
 
 func (p *portLease) Profile() transport.Profile { return p.prof }
+
+// Warm is always true here. The proxy owns the session and its cookie jar, and
+// a port that has just been opened has already done whatever warming the
+// target needs — the cold state this reports on is a property of a jar this
+// program manages, and in this mode it manages none.
+func (p *portLease) Warm() bool { return true }
