@@ -86,6 +86,14 @@ baseline run *first* so BlankTrail worked from an already-burnt IP. That run's s
 six to twenty logical requests per arm. **It does not support a "300–700 requests" claim, and
 neither does anything else yet.** The soak run that would is increment 2.
 
+**The soak run has happened** — 2026-08-23/24, `docs/measurements/2026-08-23-soak.md` — and
+its answer is that no request count is the right claim. Neither transport has a ceiling in
+requests: direct ran 391 fetches from one address with every one clean, and was stopped by
+the operator rather than by the site. What separates the two modes is the price of a refusal,
+not the count before one. The figures that replace the claim are **about 250–260 clean
+requests per hour direct** and **about 360 through BlankTrail**, both from a single address
+and both carrying the confounds that document lists in its §8.
+
 ### The fetch shape
 
 `/all?q=…` on the desktop host is a 386 KB SPA shell carrying zero listings. The canonical URL
@@ -119,7 +127,7 @@ same single `data-mfe-state` block, so one extractor serves search and seller al
 The surface is chosen by the **BlankTrail port profile**, not by the request's User-Agent: an
 iPhone UA through a `Chrome_151_win` port was still redirected `m.avito.ru` → `www.avito.ru`,
 because BlankTrail replaces the UA with its port profile's own. Opening a port with
-`{"browser":"safari","os":"ios"}` made the mobile host answer directly. In mode (b) nothing rewrites our headers, so the header set is **expected** to be the surface — but that direction is unverified. Every mobile page in this measurement set arrived through a BlankTrail `{"browser":"safari","os":"ios"}` port, behind a real browser's TLS and h2 stack, and a direct fetch collects a 429 on request one, so no mobile page has ever been read outside BlankTrail. Whether a utls client sending a mobile header set is served `m.avito.ru` or redirected to `www.avito.ru` decides whether mode (b) gets the cheap surface at all, and it is the first thing increment 2 answers.
+`{"browser":"safari","os":"ios"}` made the mobile host answer directly. In mode (b) nothing rewrites our headers, so the header set is **expected** to be the surface — but that direction is unverified. Every mobile page in this measurement set arrived through a BlankTrail `{"browser":"safari","os":"ios"}` port, behind a real browser's TLS and h2 stack, and a direct fetch collects a 429 on request one, so no mobile page has ever been read outside BlankTrail. Whether a utls client sending a mobile header set is served `m.avito.ru` or redirected to `www.avito.ru` decides whether mode (b) gets the cheap surface at all, and it is the first thing increment 2 answers. **Answered 2026-08-23: served.** Status 200 from `m.avito.ru`, no redirect, h2 negotiated, a real `srv_id` minted by the warm-up with no solver involved, and `mobile.cards.v1` reading listings off the live page. Direct mode is not desktop-only, and the watch figure stands at the mobile cost rather than double it. Recorded in `docs/measurements/2026-08-23-direct-mode-first-contact.md`.
 `Accept-Language: ru-RU,ru;q=0.9` is ours in both modes — BlankTrail passes it through
 verbatim and Avito needs it.
 
@@ -353,6 +361,8 @@ Mode (b) gets the same shape behind the same interface: a set of persistent jars
 
 Pacing has a floor and a ceiling, and they are enforced at different scopes. The floor is 3.5 seconds between two requests on the **same identity**, with ±20% jitter — not 3.0, because the measurement is the edge of what worked and a default should not sit on an edge. The ceiling is a rolling ten-minute cap of sixty requests **per egress address**, a third under the ninety that was observed to harden a 429 into a 403. With one address per port the floor is what binds and the pool sets the pace; with several identities on one address the ceiling binds instead. Both windows survive a restart, each in the table that owns its scope: the per-identity floor in `transport_sessions.window_json`, the per-address ceiling in `egress_windows.window_json` keyed by the address. A ceiling stored per session would hand every identity sharing an address the whole budget again on the next start, which is exactly the restart cheat the pacer exists to prevent.
 
+**And the same mistake was made in memory, where the schema had guarded against it on disk.** `Pacer.Wait` takes an identity and an address, and the ladder passed `Lease.Label` as the address. `Label` names the *endpoint* — `direct:chrome-133-android#0` through `#3`, or `blanktrail:20000` and `:20011` — so four jars sharing one IP were given four separate ten-minute windows and four times the budget they were entitled to. `Budget()` reported one address the whole time, which is what kept it invisible: the published figure was correct and the pacing beneath it was not, and the four-jar soak arm blew through the address limit exactly as that arithmetic predicts. The seam now carries `Lease.Egress()` distinct from `Label()`, and endpoints sharing an address must return the same string from it; with no proxies configured every direct session and every BlankTrail port reports `"direct"`.
+
 `Pacer.Budget()` publishes the arithmetic for the configuration actually in use, because the answer moves with it. Sixty requests per ten minutes per address is 360 an hour; one page-one pass is one request; a five-minute interval is twelve passes an hour — so **one egress address sustains about thirty page-one watches at five-minute resolution**, and a pool of N addresses sustains about thirty N. A schedule that exceeds what is configured is refused when it is saved, with the sum shown and both remedies named: another address, or BlankTrail. That refusal is the most useful "you need the paid mode" moment in the product, because it arrives before anything breaks — it is the difference between a user concluding they were banned and a user learning they asked for more than they had configured.
 
 **Saturation is measured and reported.** Page one catches every arrival only while the poll interval is shorter than the page's turnover time, and that "only while" is a number: `items_on_page / arrivals`, computed over the last ten evidential passes rather than over one, because a single pass with no arrivals makes it undefined and a single busy pass makes it alarming. Below two the watch is losing listings between polls, the core promise is quietly broken, and a `watch-undersampled` change fires. Zero arrivals across the whole window is not a division by zero and not an alarm: it is a quiet query, and it is reported as "no arrivals to measure" rather than as a ratio, because a metric that invents a number where it has no data is worse than one that says it has none. This is the only honest way to sell new-listing monitoring; the alternative is a product that misses arrivals and never says which.
@@ -377,8 +387,10 @@ type Lease interface {
     Session() string            // changes exactly when the identity does
     Label() string              // "blanktrail:20003" | "direct:chrome-131-android"
     Profile() Profile           // who owns which header
+    Egress() string             // the exit ADDRESS, not the endpoint — see the correction below
     RotateEgress(ctx) error     // reachable from ONE branch: 429
-    RenewIdentity(ctx) error    // 403 or soft block: new fingerprint and jar, same egress
+    RenewIdentity(ctx) error    // fallback for a 403 that waiting has not cleared
+    Recycle(ctx) error          // a new endpoint entirely, same address: soft block
     Release()
 }
 ```
@@ -387,9 +399,15 @@ type Lease interface {
 
 **One BlankTrail SDK extension, and it is target-neutral.** `captcha_action` and `captcha_max_attempts` join `openPortRequest` and `PortSpec`, because a live port reports them and the SDK cannot set them. That is the whole of it.
 
-An earlier draft of this section specified a second extension — a `Lease.Recycle` that would extract `renewIfDue`'s close-and-reopen path — on the reasoning that a 403 needs a fresh cookie jar and no control-API endpoint clears one. Reading the SDK before copying it showed the remedy already ships. `Lease.RenewIdentity` rotates the port's profile, closes its idle connections, bumps the session and resets the failure count while keeping the address, and its own doc comment states the part that matters: *"The cookie jar goes with it, because the proxy discards a solved challenge whenever the fingerprint changes."* So the jar is cleared by rotating the fingerprint, not by reopening the port — one control call instead of three, and no new code in a vendored package. `RenewIdentity` is what the ladder calls for `ClassBurned` and `ClassSoftBlock`; its price is the same re-solve either way. Whether rotation really does discard the jar is the vendor's own claim about their own proxy, and the soak run is where it gets checked rather than trusted.
+~~An earlier draft of this section specified a second extension — a `Lease.Recycle` that would extract `renewIfDue`'s close-and-reopen path — on the reasoning that a 403 needs a fresh cookie jar and no control-API endpoint clears one. Reading the SDK before copying it showed the remedy already ships. `Lease.RenewIdentity` rotates the port's profile, closes its idle connections, bumps the session and resets the failure count while keeping the address... `RenewIdentity` is what the ladder calls for `ClassBurned` and `ClassSoftBlock`; its price is the same re-solve either way.~~
 
-Two more things are wiring, not extensions. `PoolConfig.CountFailure` is set to `func(status int) bool { return status == 429 }`, which encodes "rotate the egress on 429 only" at the layer that owns rotation, so the pool physically cannot rotate on a 403 or a 439 no matter what the ladder above does. And `neutrality_test.go`'s banned-word list gains `avito`, `geetest` and `avisc`, and loses `captcha`, in the same commit that copies the SDK in — `qrator` is already on it, inherited from WB_GO, and `wildberries` and `wbaas` stay on it rather than being swapped out, because a guard that only forbids this project's own target stops being a guard the moment the package is copied again — the guard exists precisely so the first well-meaning commit cannot quietly end the package's neutrality.
+**Refuted by the soak run, and this paragraph is left standing so the reasoning that failed is visible.** The last sentence of it was right — *"whether rotation really does discard the jar is the vendor's own claim, and the soak run is where it gets checked rather than trusted"* — and the check went against the claim.
+
+`Lease.RenewIdentity` rotates the **profile**. Whatever the proxy holds for that port survives it. Measured 2026-08-24: BlankTrail port 20000 stopped returning data and was renewed six times inside a single fetch — twenty-seven minutes — answering with an empty page every time, three fetches running, while port 20011 **on the same exit address** served in under two seconds throughout. So `Recycle` is a real extension after all: `Pool.recycle` lifts the close-and-reopen out of `renewIfDue` so a caller can ask for it instead of waiting for a schedule or a failed renewal. Two SDK extensions, not one.
+
+The correction that matters more is what it implies about the table below: renewing an identity is a *weaker* act than the design assumed, and three of the four classes that asked for it did not want it.
+
+Two more things are wiring, not extensions. `PoolConfig.CountFailure` is set to `func(status int) bool { return status == 429 }`, which encodes "rotate the egress on 429 only" at the layer that owns rotation, so the pool physically cannot rotate on a 403 or a 439 no matter what the ladder above does. **The soak run confirmed this one rather than refuting it, and for a better reason than the design had**: a 429 is not a rate limit at all — see the corrected table — and a different address is the only thing that clears it. And `neutrality_test.go`'s banned-word list gains `avito`, `geetest` and `avisc`, and loses `captcha`, in the same commit that copies the SDK in — `qrator` is already on it, inherited from WB_GO, and `wildberries` and `wbaas` stay on it rather than being swapped out, because a guard that only forbids this project's own target stops being a guard the moment the package is copied again — the guard exists precisely so the first well-meaning commit cannot quietly end the package's neutrality.
 
 **WB_GO's `DefaultAttemptsPerEgress = 3` is deleted, not retuned.** It lives in `wb.RetryPolicy` rather than in the SDK, so "deleted" here means the field is simply never written into this project's own policy. It rotates on a *schedule*, every third attempt through one address, and on this target that throws away a nineteen-to-twenty-three-second clearance that was working. Rotation here is caused, never scheduled.
 
@@ -399,13 +417,53 @@ Two more things are wiring, not extensions. `PoolConfig.CountFailure` is set to 
 |---|---|---|
 | 439, or a captcha marker (`firewallCaptcha`, `gcaptcha4`, `geetest`) at any status | `ClassChallenge` | BlankTrail: repeat on the **same** port, three times, ~25 s apart. Direct: **stop.** |
 | 429 carrying wall markers on an identity that has never completed a warm-up | `ClassCold` | Direct: one root navigation for `srv_id`/`_avisc`, then one retry on the same jar. A second cold wall on an already-warm jar is `ClassChallenge`. BlankTrail: as `ClassThrottled`. |
-| 429 | `ClassThrottled` | the only class that rotates the egress; 25 s / 60 s / 200 s |
-| 403 | `ClassBurned` | `RenewIdentity`, then a 240 s cooldown. Never rotate. |
+| 429 | `ClassThrottled` | the only class that rotates the egress. **One turn per configured address, then halt** — no backoff ladder |
+| 403 | `ClassBurned` | **wait 240 s. Do not renew.** Renewal is a fallback past three waits |
 | 2xx, items present | `ClassOK` | — |
 | 2xx, result container present, zero results | `ClassEmpty` | none — a real answer |
 | 2xx, result container present, both extractors empty | `ClassShape` | **none, and zero retries** |
-| 2xx, no result container for this surface | `ClassSoftBlock` | `RenewIdentity` |
+| 2xx, no result container for this surface | `ClassSoftBlock` | **`Recycle`** — a new endpoint, same address. Twice, then report |
 | body will not decompress or is not UTF-8 | `ClassMangled` | one re-dial |
+
+> **Three rows of that table were wrong, and the soak run of 2026-08-23/24
+> replaced them.** Full working in
+> `docs/measurements/2026-08-23-soak.md`; the short version:
+>
+> **A 429 is the captcha, not a rate limit.** Sixty-six consecutive 429s went
+> through the old 25/60/200 s ladder across eleven fetches — about fifteen
+> minutes apiece — and not one became a 200. The only two that recovered went
+> through a 302, which is how a challenge flow ends. The body was then captured
+> and kept as `internal/transport/testdata/live-429-captcha.html.gz`: 27 KB,
+> titled «Доступ ограничен: проблема с IP», carrying `geetest`,
+> `firewallCaptcha`, `initGeetest` and `x-cube`. It is a Geetest page. The
+> classifier had been missing it because `Document.Wall` returns markers in
+> table order, «проблема с ip» is listed before «geetest», and the captcha test
+> read only that one returned label. `Document.Walls` reports every marker now.
+> Waiting cannot solve a captcha, so the remedy is a different address or a
+> halt — and reaching that halt in forty seconds instead of grinding for hours
+> is the difference between the boundary message being the product's honest edge
+> and being unreachable.
+>
+> **A 403 heals with time, and the identity is not what was refused.** Eighteen
+> of eighteen cleared by waiting; none failed to. An arm whose `RenewIdentity`
+> was replaced by a no-op recovered from four consecutive 403s on one unchanged
+> `srv_id`, and again two fetches later; an arm that did renew was no faster,
+> because recovery tracked the number of 240-second waits and nothing else.
+> Renewing discarded a Qrator clearance worth 19–23 s to fix something the
+> identity was not causing — the same mistake this table forbids in the other
+> direction. It survives only as a fallback past three waits, where the
+> measurement stops speaking.
+>
+> **A soft block is a stuck endpoint.** Three fetches exhausted all six attempts
+> on an empty 200 — six renewals apiece, twenty-seven minutes apiece — every one
+> of them on BlankTrail port 20000, while port 20011 on the same exit address
+> answered in under two seconds throughout. Renewing rotates the profile and
+> leaves the endpoint in place. `Recycle` closes it and opens a new one, keeping
+> the address, because a stuck endpoint is not a refused address. Two recycles
+> and a five-second settle; past that the endpoint is not what is wrong. Cost
+> fell from twenty-seven minutes to about ten seconds.
+>
+> **Not measured, and therefore unchanged:** everything else in the table.
 
 **"Result container" is a per-surface question, and it must be, because the two surfaces are built differently.** On desktop it is the `loaderData.data.catalog` object inside `data-mfe-state`, and zero results means `totalCount == 0`. On mobile there is no `data-mfe-state` block of any kind, so the container is `window.__initialData__` — an attribute-less `<script>` holding a JS string literal that holds JSON — and zero results means `search.count == 0`, corroborated by `search.emptySearch` carrying the site's own «Ничего не найдено по запросу «…»». Present with zero cards is `ClassEmpty`; `search.count > 0` with zero cards extracted is `ClassShape`, which is our bug and not a block; no `__initialData__` at all is `ClassSoftBlock`. A classifier that tested for a `catalog` object on a mobile page could never return `ClassEmpty` there — a query that legitimately emptied would fall through to `ClassSoftBlock`, `RenewIdentity` would fire on every healthy pass, and the design would throw away a nineteen-to-twenty-three-second clearance every tick. Both spellings are pinned by fixtures: an empty-result mobile page and an empty-result desktop page are captured in increment 1.
 
@@ -1424,7 +1482,11 @@ internal/winres              the icon, drawn in Go and committed as an object fi
 The `Leaser`/`Lease` seam, the classifier, `CountFailure` wired to 429 only, the widened neutrality list. The pool opened over `Channels` with one upstream per port, `blanktrail/upstream.go`'s six line formats and its file/URL refresh, and `Mixer`'s weight decay — the per-port-address claim is load-bearing for the whole budget and must be exercised here, not first met in the panel. Direct mode's utls dialler, jar, pacer, warm-up and session file. The `fakeavito` test server that enforces every measured fact: refuses a request with no nonce or a nonce over sixty seconds old, issues the identity cookie only on a root navigation, escalates 429 to 403 past ninety requests in ten minutes, never sends `Retry-After`, and has switches for dropped state, soft block and 439.
 *Demonstrable:* `avitomon fetch -mode direct <url>` prints class, path, item count and session; the same with `-mode blanktrail`. Tripping 439 in direct mode halts and prints the boundary message, and the fake server's request counter does not move for the following simulated hour.
 
-*Also in this increment:* **the soak run**. Both arms, a few hundred requests each, through the real utls client and through BlankTrail, recording ban rate per ten requests and halting at the first wall. It settles three numbers the rest of the design currently extrapolates from one forty-request sample: whether a warm utls session holds at 3.5 s, whether several jars on one address beat one, and what the honest figure is to put in the README in place of "300-700". Nothing downstream may quote a throughput number that this run did not produce.
+*Also in this increment:* **the soak run** — done, 2026-08-23/24, written up in `docs/measurements/2026-08-23-soak.md` with its raw JSONL alongside. Seven arms, about 1200 requests, one shared egress address.
+
+It answered the three questions and refuted four things this spec believed. **Does a warm utls session hold at 3.5 s?** Yes, and there is no ceiling in requests: 391 fetches from one address, all clean, ten self-healing refusals, stopped by the operator on a steady state. **Do several jars on one address beat one?** No — 23 clean requests per hour against 252, an order of magnitude worse, because the refusal is bound to the address and more jars only reach its limit sooner. **What replaces "300–700"?** Not a request count, because neither transport has a ceiling in requests. The honest figures are about **250–260 clean requests per hour direct** and about **360 through BlankTrail**, both stopped by the operator rather than by the site, both from one address, both carrying the confounds §8 of that document lists. Direct's real cost is a 74% time tax: sixty-nine of ninety-three minutes spent waiting out ten refusals.
+
+Nothing downstream may quote a throughput number this run did not produce, and nothing may quote one without the sample size and the single-address caveat attached.
 
 **3. The store and one pass.**
 The migration, `SavePass` in one transaction, `listings` and `listing_snapshots` with the lifted fingerprint and anchor rules, `pass_items`, `watch_members`, `store.Volume`, the free-space precheck, retention with the lifted windowed `DELETE`.
