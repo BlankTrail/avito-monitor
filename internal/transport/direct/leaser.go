@@ -302,4 +302,17 @@ func (x *sessionLease) RenewIdentity(ctx context.Context) error {
 	return x.s.warmUp(ctx, x.l.cfg.Root)
 }
 
+// Recycle replaces everything about this endpoint except the address: the
+// fingerprint, the jar, the session and the connections. It is what this mode
+// has in place of closing a port, and it is the remedy for a soft block.
+func (x *sessionLease) Recycle(ctx context.Context) error {
+	x.s.recycle(FingerprintFor(x.l.cfg.Surface))
+	if x.l.cfg.Root == "" {
+		return nil
+	}
+	x.s.mu.Lock()
+	defer x.s.mu.Unlock()
+	return x.s.warmUp(ctx, x.l.cfg.Root)
+}
+
 func (x *sessionLease) Release() { x.l.give(x.s) }

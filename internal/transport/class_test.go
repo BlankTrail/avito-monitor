@@ -130,11 +130,14 @@ func TestRemedies(t *testing.T) {
 	if ClassBurned.Remedy() != RemedyWait {
 		t.Errorf("ClassBurned.Remedy() = %v, want RemedyWait", ClassBurned.Remedy())
 	}
-	// NOT measured. A 200 with no container is a different signal from a 403
-	// and keeps its remedy until an arm separates them the way direct-norenew
-	// separated the 403.
-	if ClassSoftBlock.Remedy() != RemedyRenewIdentity {
-		t.Errorf("ClassSoftBlock.Remedy() = %v, want RemedyRenewIdentity",
+	// Measured on the BlankTrail arm. Three fetches in a row exhausted every
+	// attempt on an empty 200 — six renewals apiece, twenty-seven minutes
+	// apiece — all on port 20000, while port 20011 on the SAME exit address
+	// answered in under two seconds throughout. Renewing rotates the profile
+	// and leaves the endpoint in place, so it could not have helped and did
+	// not. The endpoint is what is stuck.
+	if ClassSoftBlock.Remedy() != RemedyRecycle {
+		t.Errorf("ClassSoftBlock.Remedy() = %v, want RemedyRecycle",
 			ClassSoftBlock.Remedy())
 	}
 	// Rotation stays reachable from exactly one class. The 429 is what a

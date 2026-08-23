@@ -24,6 +24,7 @@ type recordingLease struct {
 	warm     bool
 	rotated  int
 	renewed  int
+	recycled int
 	sessions int
 }
 
@@ -50,6 +51,16 @@ func (l *recordingLease) Release()         {}
 
 func (l *recordingLease) RotateEgress(context.Context) error {
 	l.rotated++
+	return nil
+}
+
+// Recycle is the strongest reset: a new endpoint entirely. The counter is
+// separate from renewed on purpose — the two were conflated in the design and a
+// soak run showed they are not the same act.
+func (l *recordingLease) Recycle(context.Context) error {
+	l.recycled++
+	l.sessions++
+	l.warm = true
 	return nil
 }
 
@@ -163,8 +174,10 @@ func TestEachRefusalGetsItsOwnRemedyAndNoOther(t *testing.T) {
 		// The measured remedy for a 403 is time. Renewing would throw away a
 		// clearance to fix something the identity was not causing.
 		{"burned", []reply{{403, "<html>Телефоны</html>"}, {200, okBody}}, 0, 0},
-		// Not measured, so unchanged.
-		{"soft block", []reply{{200, "<html><div>Авито</div></html>"}, {200, okBody}}, 0, 1},
+		// A soft block replaces the endpoint. It must not renew, which is the
+		// weaker act that measurably did nothing, and must not rotate, which
+		// would spend an address on a stuck endpoint.
+		{"soft block", []reply{{200, "<html><div>Авито</div></html>"}, {200, okBody}}, 0, 0},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -432,8 +445,8 @@ func TestTraceRecordsWhatTheFinalVerdictHides(t *testing.T) {
 		t.Errorf("Trace[0].Class = %q, want %q — the block must survive in the "+
 			"record even though the fetch succeeded", res.Trace[0].Class, ClassSoftBlock)
 	}
-	if res.Trace[0].Remedy != RemedyRenewIdentity {
-		t.Errorf("Trace[0].Remedy = %q, want %q", res.Trace[0].Remedy, RemedyRenewIdentity)
+	if res.Trace[0].Remedy != RemedyRecycle {
+		t.Errorf("Trace[0].Remedy = %q, want %q", res.Trace[0].Remedy, RemedyRecycle)
 	}
 	if res.Trace[1].Class != ClassOK {
 		t.Errorf("Trace[1].Class = %q, want ok", res.Trace[1].Class)
@@ -518,5 +531,77 @@ func TestA403RenewsOnlyOnceWaitingHasFailed(t *testing.T) {
 	if l.renewed > maxAttempts-burnWaitsBeforeRenewing {
 		t.Errorf("renewed %d times; the fallback must not become the habit",
 			l.renewed)
+	}
+}
+
+// TestASoftBlockReplacesTheEndpointRatherThanItsProfile.
+//
+// The old branch renewed the identity and waited four minutes, up to six times.
+// Measured against BlankTrail, that is exactly what does not work: three
+// fetches in a row spent twenty-seven minutes each doing it, six renewals
+// apiece, and were still handed an empty page — every one of them on port
+// 20000, while port 20011 on the SAME exit address answered in under two
+// seconds throughout. Renewing rotates the profile; the endpoint survives it.
+func TestASoftBlockReplacesTheEndpointRatherThanItsProfile(t *testing.T) {
+	now := time.Date(2026, 8, 23, 12, 0, 0, 0, time.UTC)
+	l := &recordingLease{warm: true, replies: []reply{
+		{200, "<html><div>Авито</div></html>"}, {200, okBody},
+	}}
+	f, slept := newTestFetcher(t, l,
+		Caps{SolvesChallenges: true, RotatesEgress: true, Addresses: 2}, &now)
+
+	res, err := f.Fetch(context.Background(), "https://m.avito.ru/all?q=x")
+	if err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+	if res.Verdict.Class != ClassOK {
+		t.Errorf("class = %q, want ok from the replaced endpoint", res.Verdict.Class)
+	}
+	if l.recycled != 1 {
+		t.Errorf("recycled %d times, want 1", l.recycled)
+	}
+	if l.renewed != 0 {
+		t.Errorf("renewed %d times; renewing leaves the endpoint in place and "+
+			"was measured to do nothing for this class", l.renewed)
+	}
+	if l.rotated != 0 {
+		t.Errorf("rotated %d times; a stuck endpoint is not a refused address, "+
+			"and spending one on it treats them as the same thing", l.rotated)
+	}
+	if len(*slept) != 1 || (*slept)[0] != recycleSettle {
+		t.Errorf("slept %v, want one %v settle — the four-minute wait was the "+
+			"old branch's mistake, not its remedy", *slept, recycleSettle)
+	}
+}
+
+// TestASoftBlockGivesUpAfterTwoRecycles. If replacing the endpoint twice did
+// not help, the endpoint is not what is wrong, and a third costs minutes to
+// re-learn what the second already showed.
+func TestASoftBlockGivesUpAfterTwoRecycles(t *testing.T) {
+	now := time.Date(2026, 8, 23, 12, 0, 0, 0, time.UTC)
+	l := &recordingLease{warm: true, replies: []reply{{200, "<html><div>Авито</div></html>"}}}
+	f, slept := newTestFetcher(t, l, Caps{SolvesChallenges: true}, &now)
+
+	res, err := f.Fetch(context.Background(), "https://m.avito.ru/all?q=x")
+	if err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+	if res.Verdict.Class != ClassSoftBlock {
+		t.Errorf("class = %q, want the soft block reported back", res.Verdict.Class)
+	}
+	if l.recycled != maxRecycles {
+		t.Errorf("recycled %d times, want %d", l.recycled, maxRecycles)
+	}
+	if len(res.Body) == 0 {
+		t.Error("no body kept; this is the class whose meaning is least " +
+			"certain, and the one occurrence that mattered left nothing to read")
+	}
+	total := time.Duration(0)
+	for _, d := range *slept {
+		total += d
+	}
+	if total > time.Minute {
+		t.Errorf("spent %v on a soft block; the old branch spent twenty-seven "+
+			"minutes and that is the defect this replaced", total)
 	}
 }

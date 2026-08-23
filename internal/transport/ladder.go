@@ -38,6 +38,17 @@ const maxAttempts = 6
 // one.
 const blockWait = 240 * time.Second
 
+// maxRecycles bounds what a soft block may cost. Two, because a third would
+// spend minutes re-learning what the second already showed: if replacing the
+// endpoint twice did not help, the endpoint is not the problem.
+const maxRecycles = 2
+
+// recycleSettle is the pause after replacing an endpoint. It is short on
+// purpose. The branch this replaced waited four minutes between renewals and
+// was still being handed an empty page twenty-seven minutes later, so the wait
+// was never what this class needed.
+const recycleSettle = 5 * time.Second
+
 // burnWaitsBeforeRenewing is how many waits the measured remedy gets before the
 // unmeasured one is tried. Three, because eighteen of eighteen observed 403s
 // cleared within four waits, so a fetch still refused after three has left the
@@ -168,6 +179,7 @@ func (f *Fetcher) Fetch(ctx context.Context, target string) (Result, error) {
 	challenges := 0
 	rotations := 0
 	burns := 0
+	softBlocks := 0
 
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		if err := f.pacer.Wait(ctx, lease.Session(), lease.Label()); err != nil {
@@ -323,13 +335,31 @@ func (f *Fetcher) Fetch(ctx context.Context, target string) (Result, error) {
 			// sleeping would only delay a request that is already allowed.
 
 		case ClassSoftBlock:
-			// Unmeasured, and therefore unchanged: a 200 with no container is a
-			// different signal from a 403, and nothing here has separated them
-			// the way direct-norenew separated the 403.
-			if err := lease.RenewIdentity(ctx); err != nil {
+			// The endpoint is stuck, so replace the endpoint.
+			//
+			// Measured: three fetches in a row exhausted all six attempts on an
+			// empty 200 — twenty-seven minutes each — every one of them on
+			// BlankTrail port 20000, while port 20011 on the SAME exit address
+			// answered in under two seconds throughout. Six identity renewals
+			// inside a single fetch changed nothing, because renewing rotates
+			// the profile and leaves the port itself in place.
+			//
+			// Waiting is not the remedy either, and the same three fetches show
+			// it: they waited four minutes between attempts and were still
+			// being handed an empty page twenty-seven minutes later. So a
+			// recycle gets a short settle rather than a block wait, and two of
+			// them is the limit — past that the endpoint is not what is wrong,
+			// and spending a quarter of an hour discovering that is the mistake
+			// this branch was built out of.
+			softBlocks++
+			if softBlocks > maxRecycles {
+				res.Body = body
+				return res, nil
+			}
+			if err := lease.Recycle(ctx); err != nil {
 				return res, err
 			}
-			if err := f.cfg.Sleep(ctx, blockWait); err != nil {
+			if err := f.cfg.Sleep(ctx, recycleSettle); err != nil {
 				return res, err
 			}
 

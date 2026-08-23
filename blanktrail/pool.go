@@ -761,6 +761,70 @@ func (l *Lease) RenewIdentity(ctx context.Context) error {
 	return nil
 }
 
+// Recycle tears the port down and opens a new one in its place, keeping the
+// exit address.
+//
+// It is a stronger thing than RenewIdentity, and the difference is the whole
+// reason it exists. RenewIdentity rotates the profile: the fingerprint changes
+// and the port does not, so whatever state the proxy is holding for that port
+// survives it. Measured against a live target: a port that had stopped
+// returning data was renewed six times inside one fetch, twenty-seven minutes,
+// and answered with an empty page every time, while its sibling port on the
+// same exit address kept serving in under two seconds. The port was the thing
+// that was stuck, and only closing it fixes that.
+//
+// The address is kept deliberately. A stuck port is not a refused address, and
+// spending an entry from the pool on it would treat one as the other.
+func (l *Lease) Recycle(ctx context.Context) error {
+	if l.released {
+		return errors.New("blanktrail: Recycle on a released lease")
+	}
+	return l.pool.recycle(ctx, l.pt)
+}
+
+// recycle closes and reopens one port. It is the second half of renewIfDue,
+// lifted out so a caller can ask for it directly instead of waiting for a
+// schedule or for a failed renewal to set the broken flag.
+func (p *Pool) recycle(ctx context.Context, pt *poolPort) error {
+	eg := pt.egress()
+
+	// Past this point the port is torn down, so every failure leaves it closed
+	// and marked broken — renewIfDue will repair it before it serves again.
+	if err := p.cl.ClosePort(ctx, pt.num); err != nil {
+		return p.renewFailed(pt, fmt.Errorf("blanktrail: recycle port %d: close: %w", pt.num, err))
+	}
+	if _, err := p.cl.OpenPort(ctx, pt.num, p.cfg.Spec, eg); err != nil {
+		return p.renewFailed(pt, fmt.Errorf("blanktrail: recycle port %d: reopen: %w", pt.num, err))
+	}
+	if p.isClosed() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		_ = p.cl.ClosePort(ctx, pt.num)
+		cancel()
+		return fmt.Errorf("blanktrail: recycle port %d: pool closed during recycle", pt.num)
+	}
+	// Rotating after reopening guarantees a different fingerprint even if the
+	// proxy handed back the same one on open.
+	if _, err := p.cl.RotateProfile(ctx, pt.num); err != nil {
+		return p.renewFailed(pt, fmt.Errorf("blanktrail: recycle port %d: rotate: %w", pt.num, err))
+	}
+
+	pt.base.CloseIdleConnections()
+	pt.mu.Lock()
+	pt.requests = 0
+	pt.failures = 0
+	pt.strikes = 0
+	pt.broken = false
+	pt.renewedAt = p.cfg.Now()
+	pt.session++
+	pt.mu.Unlock()
+
+	p.mu.Lock()
+	p.stats.Renewals++
+	p.stats.ProfileRotations++
+	p.mu.Unlock()
+	return nil
+}
+
 // Release returns the port to the pool and starts its cooldown. Safe to call
 // more than once.
 func (l *Lease) Release() {

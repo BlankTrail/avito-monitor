@@ -42,10 +42,23 @@ type Lease interface {
 	RotateEgress(ctx context.Context) error
 
 	// RenewIdentity replaces the fingerprint, the cookie jar and the session,
-	// keeping the address. It costs a re-solve. The remedy for ClassBurned and
-	// ClassSoftBlock, both of which are bound to the identity rather than to
-	// the IP.
+	// keeping the address. It costs a re-solve. It is the fallback for a 403
+	// that waiting has not cleared, which the measurement says is rare.
 	RenewIdentity(ctx context.Context) error
+
+	// Recycle discards the endpoint itself and builds a new one in its place,
+	// keeping the address. It is strictly stronger than RenewIdentity and the
+	// difference is why it exists.
+	//
+	// Measured: a BlankTrail port that had stopped returning data was renewed
+	// six times inside one fetch — twenty-seven minutes — and answered with an
+	// empty page every time, while its sibling port on the SAME exit address
+	// kept serving in under two seconds. RenewIdentity rotates the profile; the
+	// port, and whatever the proxy holds for it, survives that. Only closing
+	// the port fixes a stuck port.
+	//
+	// The remedy for ClassSoftBlock.
+	Recycle(ctx context.Context) error
 
 	Release()
 }

@@ -147,3 +147,24 @@ func (s *session) renew() {
 	s.restored = false
 	s.rebuildClient()
 }
+
+// recycle is renew plus the fingerprint. It is what this mode has in place of
+// closing a port: everything the target could have recognised is replaced —
+// jar, TLS hello, header set, connections — and only the exit address stays.
+//
+// The distinction was learned on the other transport. A BlankTrail port that
+// had stopped returning data was renewed six times in one fetch, twenty-seven
+// minutes, and answered with an empty page every time, because renewing rotates
+// the profile and leaves the endpoint itself in place. Here there is no proxy
+// holding state, so the strongest available reset is this one.
+func (s *session) recycle(fp Fingerprint) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.fp = fp
+	s.jar.Clear()
+	s.seq++
+	s.warm = false
+	s.restored = false
+	s.burnt = 0
+	s.rebuildClient()
+}

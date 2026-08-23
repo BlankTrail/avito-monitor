@@ -34,7 +34,8 @@ const (
 	RemedyRenewIdentity Remedy = "renew-identity" // new identity, same address
 	RemedyWarmUp        Remedy = "warm-up"        // a root navigation, then one retry
 	RemedyRedial        Remedy = "redial"
-	RemedyWait          Remedy = "wait" // same identity, same address, just time
+	RemedyWait          Remedy = "wait"    // same identity, same address, just time
+	RemedyRecycle       Remedy = "recycle" // a new endpoint entirely, same address
 )
 
 // Remedy is the single table the ladder reads.
@@ -62,10 +63,15 @@ func (c Class) Remedy() Remedy {
 		// twenty-three seconds to fix something the identity was not causing.
 		return RemedyWait
 	case ClassSoftBlock:
-		// NOT measured. A 200 with no container is a different signal from a
-		// 403 and keeps the remedy it was given until someone runs the arm that
-		// separates them, the way direct-norenew separated the 403.
-		return RemedyRenewIdentity
+		// Measured on the BlankTrail arm, and it refuted the remedy this class
+		// used to have. Three fetches in a row exhausted every attempt on an
+		// empty 200 — six renewals apiece, twenty-seven minutes apiece — all on
+		// port 20000, while port 20011 on the SAME exit address kept answering
+		// in under two seconds. Renewing rotates the profile and leaves the
+		// endpoint in place, so it could not have helped and did not.
+		//
+		// The endpoint is what is stuck. Replace it.
+		return RemedyRecycle
 	case ClassCold:
 		return RemedyWarmUp
 	case ClassThrottled:
