@@ -1,0 +1,31 @@
+# build output
+/bin/
+/dist/
+*.exe
+
+# .syso files are build output when a tool makes them, and source when the
+# program draws its own icon. These will be drawn — see internal/winres — and
+# committed, so a release needs nothing but the go tool.
+*.syso
+!cmd/*/icon_windows_*.syso
+
+# runtime data
+/data/
+*.db
+*.db-wal
+*.db-shm
+
+# local config and secrets. The BlankTrail API key lives in the database as a
+# secret setting and must never reach a file in this tree.
+/config.yaml
+*.local.yaml
+.env
+
+# exports
+/out/
+*.csv
+*.xlsx
+*.jsonl
+
+# scratch
+/scratchpad/

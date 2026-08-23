@@ -1,0 +1,29 @@
+avito-monitor
+Copyright (C) 2026 BlankTrail
+
+This program is free software: you can redistribute it and/or modify it under
+the terms of the GNU Affero General Public License as published by the Free
+Software Foundation, either version 3 of the License, or (at your option) any
+later version. See LICENSE for the full text.
+
+--------------------------------------------------------------------------------
+Provenance
+--------------------------------------------------------------------------------
+
+Substantial parts of this program are adapted from wildberries-monitor
+(github.com/BlankTrail/wildberries-monitor), by the same copyright holder and
+under the same licence: the rules engine, the change tracker, the exporters, the
+chart drawing, the event bus, the autostart entries, the icon generator, the
+notification outbox and the shape of the web panel. The `blanktrail` package is
+copied from that project unmodified except for two additive extensions, and it
+remains neutral about the site it is pointed at — a test enforces that.
+
+--------------------------------------------------------------------------------
+Captured pages under docs/measurements/fixtures/
+--------------------------------------------------------------------------------
+
+Pages retrieved from avito.ru on 2026-08-23 and kept so that the parser can be
+tested without touching the network. They are the evidence the design rests on.
+They contain third-party personal data — seller display names, addresses and
+house-precision coordinates — and MUST be scrubbed before this repository is
+published. See docs/measurements/fixtures/README.md.
