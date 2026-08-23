@@ -58,6 +58,15 @@ type record struct {
 	Total    *int64  `json:"total,omitempty"`
 	Detail   string  `json:"detail,omitempty"`
 	Err      string  `json:"error,omitempty"`
+	// Trace is every attempt inside this fetch, "class/status" each. It is
+	// recorded because Class above is the FINAL verdict: a request the site
+	// blocked and that then succeeded after a renewal records "ok", and the
+	// push-back would be invisible. The first live soak run had exactly one
+	// such request, and it read as untroubled.
+	Trace []string `json:"trace,omitempty"`
+	// Pushback is true when the site refused at least once inside this fetch,
+	// whatever the outcome. It is the honest denominator for a ban rate.
+	Pushback bool `json:"pushback,omitempty"`
 }
 
 // good is what counts as the site having answered. An empty page is a fine
@@ -198,6 +207,12 @@ func run(args []string) error {
 			Listings: len(res.Page.Listings), Total: res.Page.TotalCount,
 			Detail: res.Verdict.Detail,
 		}
+		for _, st := range res.Trace {
+			r.Trace = append(r.Trace, fmt.Sprintf("%s/%d", st.Class, st.Status))
+			if st.Remedy != transport.RemedyNone {
+				r.Pushback = true
+			}
+		}
 		if ferr != nil {
 			r.Err = ferr.Error()
 		}
@@ -205,8 +220,13 @@ func run(args []string) error {
 		if err := enc.Encode(r); err != nil {
 			return err
 		}
-		fmt.Printf("%4d  %-11s %3d  %2d listings  %5.1fs  %s\n",
-			r.N, r.Class, r.Status, r.Listings, r.Elapsed, shortSession(r.Session))
+		note := ""
+		if r.Pushback {
+			note = "  PUSHBACK " + strings.Join(r.Trace, " -> ")
+		}
+		fmt.Printf("%4d  %-11s %3d  %2d listings  %6.1fs  %s%s\n",
+			r.N, r.Class, r.Status, r.Listings, r.Elapsed,
+			shortSession(r.Session), note)
 
 		if ctx.Err() != nil {
 			stopped = "interrupted by the operator"
@@ -261,13 +281,19 @@ func summarise(w *os.File, arm string, recs []record, wall time.Duration, stoppe
 			fmt.Sprintf("%d-%d", start+1, end), good, (end-start)-good, tally(classes))
 	}
 
-	var good int
+	var good, pushed int
 	classes := map[string]int{}
 	identities := map[string]int{}
 	labels := map[string]int{}
-	var firstBad int
+	var firstBad, firstPush int
 	for _, r := range recs {
 		classes[r.Class]++
+		if r.Pushback {
+			pushed++
+			if firstPush == 0 {
+				firstPush = r.N
+			}
+		}
 		identities[r.Session]++
 		labels[r.Label]++
 		if r.good() {
@@ -279,7 +305,14 @@ func summarise(w *os.File, arm string, recs []record, wall time.Duration, stoppe
 
 	fmt.Fprintf(w, "\ngood            %d/%d (%.1f%%)\n",
 		good, len(recs), 100*float64(good)/float64(len(recs)))
-	fmt.Fprintf(w, "classes         %s\n", tally(classes))
+	fmt.Fprintf(w, "classes         %s (FINAL verdicts)\n", tally(classes))
+	fmt.Fprintf(w, "pushback        %d/%d fetches met a refusal at least once\n",
+		pushed, len(recs))
+	if firstPush > 0 {
+		fmt.Fprintf(w, "first pushback  request %d\n", firstPush)
+	} else {
+		fmt.Fprintf(w, "first pushback  none in %d requests\n", len(recs))
+	}
 	fmt.Fprintf(w, "identities      %d distinct, %d requests each on average\n",
 		len(identities), len(recs)/max(1, len(identities)))
 	fmt.Fprintf(w, "egress labels   %d distinct\n", len(labels))

@@ -349,3 +349,57 @@ func TestRotationIsSkippedWhenThereIsNowhereToGo(t *testing.T) {
 // bodyOf and itoa keep the recording lease terse.
 func bodyOf(s string) io.ReadCloser { return io.NopCloser(strings.NewReader(s)) }
 func itoa(i int) string             { return strconv.Itoa(i) }
+
+// TestTraceRecordsWhatTheFinalVerdictHides.
+//
+// This is the defect the first live soak run exposed. A fetch that met a soft
+// block, renewed its identity and then succeeded reports ClassOK, and the block
+// leaves no other mark than a longer elapsed time. A harness measuring how
+// often the site pushes back would have written that down as an untroubled
+// request — the same silent success this design refuses everywhere else.
+func TestTraceRecordsWhatTheFinalVerdictHides(t *testing.T) {
+	now := time.Date(2026, 8, 23, 12, 0, 0, 0, time.UTC)
+	l := &recordingLease{warm: true, replies: []reply{
+		{200, "<html><div>Авито</div></html>"}, // a soft block
+		{200, okBody}, // and then, after the renewal, fine
+	}}
+	f, _ := newTestFetcher(t, l, Caps{SolvesChallenges: true, RotatesEgress: true}, &now)
+
+	res, err := f.Fetch(context.Background(), "https://m.avito.ru/all?q=x")
+	if err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+	if res.Verdict.Class != ClassOK {
+		t.Fatalf("final class = %q, want ok — the remedy worked", res.Verdict.Class)
+	}
+	if len(res.Trace) != 2 {
+		t.Fatalf("Trace has %d steps, want 2: the block and the recovery", len(res.Trace))
+	}
+	if res.Trace[0].Class != ClassSoftBlock {
+		t.Errorf("Trace[0].Class = %q, want %q — the block must survive in the "+
+			"record even though the fetch succeeded", res.Trace[0].Class, ClassSoftBlock)
+	}
+	if res.Trace[0].Remedy != RemedyRenewIdentity {
+		t.Errorf("Trace[0].Remedy = %q, want %q", res.Trace[0].Remedy, RemedyRenewIdentity)
+	}
+	if res.Trace[1].Class != ClassOK {
+		t.Errorf("Trace[1].Class = %q, want ok", res.Trace[1].Class)
+	}
+}
+
+// TestTraceOfAnUntroubledFetchIsOneStep. The common case must stay cheap and
+// must not read as though something happened.
+func TestTraceOfAnUntroubledFetchIsOneStep(t *testing.T) {
+	now := time.Date(2026, 8, 23, 12, 0, 0, 0, time.UTC)
+	l := &recordingLease{warm: true, replies: []reply{{200, okBody}}}
+	f, _ := newTestFetcher(t, l, Caps{SolvesChallenges: true, RotatesEgress: true}, &now)
+
+	res, err := f.Fetch(context.Background(), "https://m.avito.ru/all?q=x")
+	if err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+	if len(res.Trace) != 1 || res.Trace[0].Class != ClassOK ||
+		res.Trace[0].Remedy != RemedyNone {
+		t.Errorf("Trace = %+v, want exactly one ok step needing no remedy", res.Trace)
+	}
+}

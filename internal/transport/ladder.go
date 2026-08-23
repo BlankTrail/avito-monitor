@@ -70,6 +70,24 @@ type Result struct {
 	// Body is kept only for a verdict worth reading later — a shape change or
 	// a mangled body. Keeping every body would be an archive nobody asked for.
 	Body []byte
+	// Trace is one entry per attempt, in order. It exists because Verdict is
+	// the FINAL verdict: a fetch that met a soft block, renewed its identity
+	// and then succeeded reports ClassOK, and the block leaves no other mark
+	// than a longer elapsed time. A caller measuring how often the site pushes
+	// back would read that as an untroubled request, which is the same silent
+	// success this design refuses everywhere else.
+	//
+	// Only populated past one entry when a remedy was applied, so the common
+	// case costs one small append.
+	Trace []Step
+}
+
+// Step is one attempt inside one fetch: what came back, and what was done
+// about it.
+type Step struct {
+	Class  Class
+	Status int
+	Remedy Remedy
 }
 
 // FetchConfig is the ladder's own knobs. Everything else it reads from Caps.
@@ -150,6 +168,12 @@ func (f *Fetcher) Fetch(ctx context.Context, target string) (Result, error) {
 		res.Verdict = Classify(Input{
 			Status: status, Doc: doc, Page: page, ExtractErr: extractErr,
 			Warm: lease.Warm(),
+		})
+		// Recorded before the switch, so the trace shows what the site said on
+		// every attempt rather than only on the one that happened to be last.
+		res.Trace = append(res.Trace, Step{
+			Class: res.Verdict.Class, Status: status,
+			Remedy: res.Verdict.Class.Remedy(),
 		})
 
 		switch res.Verdict.Class {
