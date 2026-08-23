@@ -2346,10 +2346,10 @@ import (
 // is — weaker than an attribute, and the caller records that it was used.
 const initialDataPrefix = "window.__initialData__"
 
-// mobileState is the part of __initialData__ this package reads. The listings
+// mobileSearchState is the part of __initialData__ this package reads. The listings
 // are NOT in it — measured: urlPath and priceDetailed appear zero times — they
 // are the server-rendered cards. What is here is what the classifier needs.
-type mobileState struct {
+type mobileSearchState struct {
 	Search struct {
 		Count       *int64 `json:"count"`
 		MainCount   *int64 `json:"mainCount"`
@@ -2387,22 +2387,22 @@ func firstJSString(s string) (string, bool) {
 
 // readMobileState finds and decodes window.__initialData__. It is a JS string
 // literal holding JSON text, so it unmarshals twice.
-func readMobileState(body []byte) (mobileState, bool) {
+func readMobileState(body []byte) (mobileSearchState, bool) {
 	text, ok := scriptTextByPrefix(body, initialDataPrefix)
 	if !ok {
-		return mobileState{}, false
+		return mobileSearchState{}, false
 	}
 	lit, ok := firstJSString(text)
 	if !ok {
-		return mobileState{}, false
+		return mobileSearchState{}, false
 	}
 	var inner string
 	if err := json.Unmarshal([]byte(lit), &inner); err != nil {
-		return mobileState{}, false
+		return mobileSearchState{}, false
 	}
-	var st mobileState
+	var st mobileSearchState
 	if err := json.Unmarshal([]byte(inner), &st); err != nil {
-		return mobileState{}, false
+		return mobileSearchState{}, false
 	}
 	return st, true
 }

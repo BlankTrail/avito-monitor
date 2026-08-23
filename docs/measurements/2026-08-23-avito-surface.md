@@ -204,3 +204,20 @@ Two consequences beyond the classifier:
 
 Note for the parser: `window.__initialData__` is also the name the older Python tester's
 fixture used, so that name belonged to the mobile surface all along.
+
+## 15. Correction: the mobile card has no description
+
+§10 said the mobile card carries a description in `<meta itemProp="description">`. It does
+not. Measured against `mobile-search-30.html.gz` while implementing the extractor: the page
+has exactly 30 such elements, all 30 carry the literal string `...`, and no `content`
+attribute anywhere on the page holds Russian text longer than 40 characters.
+
+So the description is available on the desktop surface only, and there on about 20 rows in 50
+(`iva.DescriptionStep[].payload.description`). On the **default** collection surface it does
+not exist.
+
+This is not cosmetic. The repost linker treats an identical description digest as one of its
+two strong corroborators, and the other is the image key, which is itself unverified. On
+mobile it therefore has neither, and an auto-link rests on the weaker
+title-plus-coordinates-plus-price tier. The extractor reads the placeholder and discards it
+rather than not reading it, so the day Avito fills it in there is one place to change.
