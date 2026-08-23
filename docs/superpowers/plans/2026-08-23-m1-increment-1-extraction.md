@@ -949,7 +949,7 @@ func TestDocumentWall(t *testing.T) {
 // tester a debugging session by its absence: markers are matched against a
 // body whose case the site does not guarantee.
 func TestWallMarkersAreCaseInsensitive(t *testing.T) {
-	if _, ok := Document{Body: []byte("PROBLEMA... Проблема С IP")}.Wall(); !ok {
+	if _, ok := (Document{Body: []byte("PROBLEMA... Проблема С IP")}).Wall(); !ok {
 		t.Error("a marker differing only in case was missed")
 	}
 }
