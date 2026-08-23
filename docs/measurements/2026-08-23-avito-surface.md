@@ -204,3 +204,70 @@ Two consequences beyond the classifier:
 
 Note for the parser: `window.__initialData__` is also the name the older Python tester's
 fixture used, so that name belonged to the mobile surface all along.
+
+## 15. Correction: the mobile card has no description
+
+§10 said the mobile card carries a description in `<meta itemProp="description">`. It does
+not. Measured against `mobile-search-30.html.gz` while implementing the extractor: the page
+has exactly 30 such elements, all 30 carry the literal string `...`, and no `content`
+attribute anywhere on the page holds Russian text longer than 40 characters.
+
+So the description is available on the desktop surface only, and there on about 20 rows in 50
+(`iva.DescriptionStep[].payload.description`). On the **default** collection surface it does
+not exist.
+
+This is not cosmetic. The repost linker treats an identical description digest as one of its
+two strong corroborators, and the other is the image key, which is itself unverified. On
+mobile it therefore has neither, and an auto-link rests on the weaker
+title-plus-coordinates-plus-price tier. The extractor reads the placeholder and discards it
+rather than not reading it, so the day Avito fills it in there is one place to change.
+
+## 16. Correction: the seller page is a different envelope
+
+§11 said `/brands/<slug>` uses "the same single `data-mfe-state` block" as a search page. The
+block is in the same place; what is inside it is not. Measured while implementing the
+resolver:
+
+| | search page | seller page |
+|---|---|---|
+| top-level keys | `loaderData`, … | `i18n`, `state`, `toggles` — **no `loaderData` at all** |
+| items | `loaderData.data.catalog.items` (50) | `state.searchData.profileCatalog.items` (**15**) |
+| count | `loaderData.data.totalCount` | `state.searchData.profileCatalog.totalCount` (772) |
+
+The 45 `urlPath` occurrences counted in §11 were not 45 listings — the block holds other
+objects carrying that key too.
+
+The item objects underneath are identical in shape (`priceDetailed`, `sortTimeStamp`, `coords`),
+so one decoder serves both and only the path to the array differs. That is what makes the
+resolver an ordered table of NAMED rules rather than one rule plus a probe: two envelopes are
+known, each is named, and the probe stays as the last resort for a third nobody has seen.
+
+The desktop DOM fallback does **not** cover a seller page: it selects on `data-marker="item"`,
+which a seller page does not use. The cross-path audit is therefore a search-page calibration
+only, and on a seller page it reports every listing as state-only. That is honest rather than
+broken, but it means a seller watch has no second opinion if Avito withholds the state block.
+
+## 17. Two things learned while capturing the item page
+
+**Go cannot use BlankTrail's SOCKS port for this.** `http.Transport.Proxy` accepts a
+`socks5://` URL and resolves the hostname **locally**, then connects to the address; Go has no
+`socks5h://`. BlankTrail's MITM needs the hostname for SNI and for the certificate it mints, so
+the connection dies as an EOF at the SOCKS handshake. An HTTP CONNECT port works, because
+CONNECT carries the hostname. Increment 2's transport must either open HTTP ports or bring its
+own dialler — this is not a capture-tool quirk, it is a property of the standard library.
+
+**Sellers write with homoglyphs.** The captured item's own description begins
+«💙 iPhоne 15, 128 ГБ, Hовый, Opигинaльный…» — the `о` in "iPhоne" is Cyrillic U+043E, the `H`
+in "Hовый" is Latin, and there are more. It is deliberate, and it is how a seller dodges
+keyword filters.
+
+Two consequences, both for later increments. A user's negative keyword filter («исключить
+ремонт») will miss text written this way. And the repost linker folds a title to a digest and
+treats an exact match as a gate — two incarnations of one advertisement whose titles differ by
+one confusable character would not link, which is a false negative in the direction the design
+already prefers, but it is a measurable loss rather than a theoretical one. Whatever fold is
+chosen should be measured against real titles before its threshold is trusted.
+
+Verified extraction from the real item page: id 7775028313, price 26 490 ₽ → 2 649 000 minor,
+**ViewsTotal 14947 and ViewsToday 21** — views are public and cost one request, exactly as
+measured during discovery.

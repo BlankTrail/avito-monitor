@@ -1,0 +1,58 @@
+{
+  "Surface": "desktop",
+  "Kind": "item",
+  "Listings": [
+    {
+      "ItemID": 7775028313,
+      "URLPath": "",
+      "Title": "iPhone 15, 128 ГБ",
+      "CategoryID": 0,
+      "CategoryRootID": 0,
+      "MicroCategoryID": 0,
+      "LocationID": 0,
+      "LocationName": "",
+      "GeoAddress": "",
+      "Lat": null,
+      "Lng": null,
+      "CoordsPrecise": false,
+      "SortTimeMS": null,
+      "AllowTimeMS": null,
+      "PriceKind": "exact",
+      "Price": {
+        "Minor": 2649000,
+        "Currency": "RUB"
+      },
+      "PriceLabel": "26 490 ₽",
+      "PriceWithoutDiscountMinor": null,
+      "DiscountPct": null,
+      "WasLowered": false,
+      "SellerKey": "",
+      "SellerName": "",
+      "IsCompany": null,
+      "Description": "💙 iPhоne 15, 128 ГБ, Hовый, Opигинaльный, с Гарантиeй 3 годa.👋🏻 Приxоди на тecт-дpaйв и пoлучи пoдapки нa 20.000 pублей: беспровoдныe нaушники, смарт чacы, повepбaнк, беспроводнaя зapядкa и кapдхoлдеp в подaрок + поклеим защитное стeкло! ЧEXОЛ + CTEKЛO B ПОДAРОК! 🎁❗️СТРОГО ПРOBЕРЕННАЯ ОРИГИНАЛЬНАЯ ТЕХНИКА С ГАРАНТИЕЙ 3 ГОДА. Никаких восстановленных и обменных телефонов, которые продают под видом новых!⭐️Не устроит качество товара или обслуживание? Вернем деньги! Перед покупкой Вы сможете проверить гаджет. ♻️ТRАDЕ-IN НА САМЫХ ВЫГОДНЫХ УСЛОВИЯХ, сдайте старое устройство и получи ДОПОЛНИТЕЛЬНУЮ СКИДКУ 3.000 Рублей, оценим выше конкурентов!🏦 УСПЕЙ ПОЛУЧИТЬ ПЕРВЫЙ ПЛАТЕЖ В ПОДАРОК И ПОДАРКИ НА 20.000 РУБЛЕЙ ПРИ ОФОРМЛЕНИИ БЕСПРОЦЕНТНОЙ РАССРОЧКИ. У нас нет дополнительных страховок и скрытых платежей!📲Перенесем данные, поклеим защитное стекло и установим недоступные приложения (Сбербанк Онлайн, Тинькофф, Альфа и т.д.)📍 Ждем Вас в наших уютных магазинах в Екатеринбурге:ул.Толмачёва, 28, Пн-Вс 10:00 - 22:00 🕘Публичный артикул товара: l-3958",
+      "ImagesCount": null,
+      "IsXL": null,
+      "IsReMap": null,
+      "IsVerified": null,
+      "IsReserved": null,
+      "IsMarketplace": null,
+      "HasVideo": null,
+      "HasDelivery": null,
+      "ViewsTotal": 14947,
+      "ViewsToday": 21,
+      "ClosedReason": ""
+    }
+  ],
+  "TotalCount": null,
+  "EmptyDeclared": false,
+  "CanonicalURL": "",
+  "Audit": null,
+  "Report": {
+    "Rule": "item.markers.v1",
+    "Path": "dom",
+    "ScriptType": "",
+    "Found": 1,
+    "Dropped": 0,
+    "Warnings": null
+  }
+}

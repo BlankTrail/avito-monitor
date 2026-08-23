@@ -1,0 +1,17 @@
+{
+  "Surface": "desktop",
+  "Kind": "redirect",
+  "Listings": null,
+  "TotalCount": null,
+  "EmptyDeclared": false,
+  "CanonicalURL": "/all/telefony/mobilnye_telefony/apple/iphone_15-ASgBAgICA0SywA2SoO0RtMANzqs5sMENiPw3?context=H4sIAAAAAAAA_0yQz3KbMBjE38XXHvqBcVOT6aEWQSOPTAe5FhI3JMX8icBuAGGn03fv4MTTHjXab_e3W4Re-LsPPQgX-vT6-qyH-tQtHvswCIJwQbpBkzZuDLZO2an-Yadat3xSOG5yPtU0nupcVPN7lIKdlb_SpDlrMqA9SJf2Bn8HGqXOYEoS_AS0Scc13oGkrEwwpShipUGfgD6wckBXoIKVA96ApGk_4AjkA6sNCoAeSqDHtE_QZ5BR6m6aXTn9Gs4aV061h3L3U6DxutKkvmjSbXqZJVZlfDTxO7dsea-W5v2_ZVb7tlM2t7pL_nG3K6dbr1LIqxTm1_l27qiwHYtlMmvUs3fb4GIy_nbznjfqYi8X25VA5ItA2_-Y-EfexUk_hiJbj_sD06Q5-bvmyUuizXr2N5gHd07Y3rb4ClSkbu4uKWvuHBmHAq9fPnLe8iy-Sr866pa_FGJr5ZJp0nnmuCffFo9__gYAAP__fsAqe90BAAA",
+  "Audit": null,
+  "Report": {
+    "Rule": "desktop.redirect.v1",
+    "Path": "state",
+    "ScriptType": "mime/invalid",
+    "Found": 0,
+    "Dropped": 0,
+    "Warnings": null
+  }
+}

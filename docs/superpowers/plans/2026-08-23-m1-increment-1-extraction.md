@@ -4,7 +4,7 @@
 
 **Goal:** Turn a captured Avito page into a `Page` of typed listings, on four surfaces, with no network and no regular expressions, and prove it survives the markup changes Avito actually makes.
 
-**Architecture:** One package, `avito/`, that imports no `net` and no `net/http` and takes its clock as a parameter — enforced by a `make check-no-net` target, so every test in it is offline by construction. Four named extraction rules run over `golang.org/x/net/html`: `desktop.catalog.v1` reads the `data-mfe-state` JSON, `desktop.microdata.v1` reads the same page's server-rendered cards as an independent second opinion, `mobile.cards.v1` reads `window.__initialData__` plus the `item-wrapper(<id>)` cards, and `item.markers.v1` reads an item page's `data-marker` handles. Every extraction records **which rule answered** in an `ExtractionReport`, because a silent switch of path is the earliest warning this install has been classified as a bot.
+**Architecture:** One package, `avito/`, that imports no `net` and no `net/http` and takes its clock as a parameter — enforced by a test in the package itself, so every test in it is offline by construction. Four named extraction rules run over `golang.org/x/net/html`: `desktop.catalog.v1` reads the `data-mfe-state` JSON, `desktop.microdata.v1` reads the same page's server-rendered cards as an independent second opinion, `mobile.cards.v1` reads `window.__initialData__` plus the `item-wrapper(<id>)` cards, and `item.markers.v1` reads an item page's `data-marker` handles. Every extraction records **which rule answered** in an `ExtractionReport`, because a silent switch of path is the earliest warning this install has been classified as a bot.
 
 **Tech Stack:** Go 1.26, no CGO. One direct dependency this increment: `golang.org/x/net` (for `html`). Standard library otherwise — `encoding/json`, `unicode`, `strings`, `compress/gzip`.
 
@@ -14,7 +14,7 @@
 
 - Module path `github.com/BlankTrail/avito-monitor`. Go directive `1.26.0`.
 - **No CGO on any platform.** One machine cross-compiles every release.
-- `avito/` must not import `net`, `net/http`, `time.Now`, or any database package. `make check-no-net` enforces the first two and fails the build.
+- `avito/` must not import `net`, `net/http`, `time.Now`, or any database package. `TestPackageReachesNoNetwork` enforces the first two and fails the suite.
 - **No regular expressions over markup, anywhere.** Not `regexp`, not `strings.Split` on a tag. Elements are resolved with `golang.org/x/net/html` and their subtree text is taken; JSON is decoded with `encoding/json`. This is an owner requirement and the reason the package exists in this shape.
 - **Never `html.UnescapeString`.** `x/net/html` has already decided: `Text()` returns raw bytes for script data, `TagAttr` returns attribute values already unescaped. Unescaping either corrupts a title carrying a literal `&amp;` and there is no error anywhere when it happens.
 - **Every byte kept from the tokenizer is copied.** `Text()` and `TagAttr` slices are invalid after the next `Next()`. The bug reproduces only on documents large enough for the buffer to be reused — that is, only in production.
@@ -28,7 +28,7 @@
 
 | File | Responsibility |
 |---|---|
-| `go.mod`, `Makefile` | module, and the `check-no-net` guard |
+| `go.mod` | the module. There is no task runner: WB_GO has none either, and its CI is plain `go build`, `go vet`, `go test -race` — nothing for a contributor to install. |
 | `avito/doc.go` | package doc: what it refuses to import and why |
 | `avito/money.go` | `Money`, `RoublesToMinor`, `DigitsToMinor` |
 | `avito/model.go` | `Surface`, `Path`, `EnvelopeKind`, `PriceKind`, `Listing`, `Page` |
@@ -53,14 +53,14 @@
 ### Task 1: Module, the no-net guard, and the first fixture on disk
 
 **Files:**
-- Create: `go.mod`, `Makefile`, `avito/doc.go`, `avito/deps_test.go`
+- Create: `go.mod`, `avito/doc.go`, `avito/deps_test.go`
 - Create: `avito/testdata/README.md`
 
 **Interfaces:**
 - Consumes: nothing.
-- Produces: package `avito` at `github.com/BlankTrail/avito-monitor/avito`; `make check-no-net`.
+- Produces: package `avito` at `github.com/BlankTrail/avito-monitor/avito`; `TestPackageReachesNoNetwork`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 `avito/deps_test.go`:
 
@@ -106,7 +106,7 @@ func TestPackageReachesNoNetwork(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run it and watch it fail**
+- [x] **Step 2: Run it and watch it fail**
 
 ```bash
 cd S:/Projects/Avito_Go && go test ./avito/ -run TestPackageReachesNoNetwork -v
@@ -114,7 +114,7 @@ cd S:/Projects/Avito_Go && go test ./avito/ -run TestPackageReachesNoNetwork -v
 
 Expected: FAIL — there is no `go.mod` and no package `avito` yet (`go: cannot find main module`).
 
-- [ ] **Step 3: Create the module and the package**
+- [x] **Step 3: Create the module and the package**
 
 `go.mod`:
 
@@ -154,7 +154,7 @@ Then:
 cd S:/Projects/Avito_Go && go mod download golang.org/x/net && go mod tidy
 ```
 
-- [ ] **Step 4: Run the test and watch it pass**
+- [x] **Step 4: Run the test and watch it pass**
 
 ```bash
 cd S:/Projects/Avito_Go && go test ./avito/ -v
@@ -162,36 +162,7 @@ cd S:/Projects/Avito_Go && go test ./avito/ -v
 
 Expected: PASS (`TestPackageReachesNoNetwork`).
 
-- [ ] **Step 5: Add the Makefile target that makes it a build gate**
-
-`Makefile`:
-
-```make
-.PHONY: all test check-no-net lint
-
-all: test check-no-net
-
-test:
-	go test ./...
-
-# The same property TestPackageReachesNoNetwork asserts, as a build gate, so a
-# CI run that skips tests still catches it.
-check-no-net:
-	@if go list -deps ./avito/ | grep -qx 'net\|net/http'; then \
-		echo "FAIL: package avito reaches the network"; exit 1; \
-	else echo "ok   avito is offline"; fi
-
-lint:
-	go vet ./...
-```
-
-```bash
-cd S:/Projects/Avito_Go && make check-no-net
-```
-
-Expected: `ok   avito is offline`
-
-- [ ] **Step 6: Move the captured fixtures into the package**
+- [x] **Step 5: Move the captured fixtures into the package**
 
 The five pages already captured live in `docs/measurements/fixtures/`. Copy them where the tests will read them, keeping the gzip:
 
@@ -224,10 +195,10 @@ They carry third-party personal data and must be scrubbed before this
 repository is published. See `docs/measurements/fixtures/README.md`.
 ```
 
-- [ ] **Step 7: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
-cd S:/Projects/Avito_Go && git add go.mod go.sum Makefile avito/ && git commit -m "$(cat <<'MSG'
+cd S:/Projects/Avito_Go && git add go.mod avito/ && git commit -m "$(cat <<'MSG'
 feat(avito): the module, and a package that cannot reach the network
 
 An extractor that can reach the network grows a test that does, and that test
@@ -255,7 +226,7 @@ MSG
 
 This is the single highest-consequence function in the codebase. Avito states prices in whole roubles; Wildberries, whose code is lifted elsewhere in this project, states kopecks. A hundredfold error still sorts correctly, still renders as a plausible number, and poisons the whole price history before anyone reads a chart.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 `avito/money_test.go`:
 
@@ -337,7 +308,7 @@ func TestDigitsToMinor(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run it and watch it fail**
+- [x] **Step 2: Run it and watch it fail**
 
 ```bash
 cd S:/Projects/Avito_Go && go test ./avito/ -run 'TestRoublesToMinor|TestDigitsToMinor' -v
@@ -345,7 +316,7 @@ cd S:/Projects/Avito_Go && go test ./avito/ -run 'TestRoublesToMinor|TestDigitsT
 
 Expected: FAIL — `undefined: RoublesToMinor`, `undefined: DigitsToMinor`, `undefined: ErrPriceOverflow`.
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 `avito/money.go`:
 
@@ -420,7 +391,7 @@ func DigitsToMinor(label string) (int64, bool) {
 }
 ```
 
-- [ ] **Step 4: Run the tests and watch them pass**
+- [x] **Step 4: Run the tests and watch them pass**
 
 ```bash
 cd S:/Projects/Avito_Go && go test ./avito/ -run 'TestRoublesToMinor|TestDigitsToMinor' -v
@@ -428,7 +399,7 @@ cd S:/Projects/Avito_Go && go test ./avito/ -run 'TestRoublesToMinor|TestDigitsT
 
 Expected: PASS, all sub-tests.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd S:/Projects/Avito_Go && git add avito/money.go avito/money_test.go && git commit -m "$(cat <<'MSG'
@@ -457,7 +428,7 @@ MSG
 - Consumes: `Money` (Task 2).
 - Produces: `Surface`, `Path`, `EnvelopeKind`, `PriceKind` and their constants; `Listing`; `Page` with `Ok()`; `ExtractionReport`; `Warning`; warning code constants.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 `avito/model_test.go`:
 
@@ -511,7 +482,7 @@ func TestReportWarn(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run it and watch it fail**
+- [x] **Step 2: Run it and watch it fail**
 
 ```bash
 cd S:/Projects/Avito_Go && go test ./avito/ -run 'TestPageOk|TestReportWarn' -v
@@ -519,7 +490,7 @@ cd S:/Projects/Avito_Go && go test ./avito/ -run 'TestPageOk|TestReportWarn' -v
 
 Expected: FAIL — `undefined: Page`, `undefined: ExtractionReport`.
 
-- [ ] **Step 3: Write the model**
+- [x] **Step 3: Write the model**
 
 `avito/model.go`:
 
@@ -725,7 +696,7 @@ func (r *ExtractionReport) HasWarning(code WarnCode) bool {
 }
 ```
 
-- [ ] **Step 4: Run the tests and watch them pass**
+- [x] **Step 4: Run the tests and watch them pass**
 
 ```bash
 cd S:/Projects/Avito_Go && go test ./avito/ -v
@@ -733,7 +704,7 @@ cd S:/Projects/Avito_Go && go test ./avito/ -v
 
 Expected: PASS, including the earlier tasks' tests.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd S:/Projects/Avito_Go && git add avito/model.go avito/report.go avito/model_test.go && git commit -m "$(cat <<'MSG'
@@ -769,7 +740,7 @@ MSG
 
 A body that reaches a reader still compressed produces no markers and no items, and reads downstream as "the query matched nothing". It is the single most expensive silent failure in this system, and it has already cost this codebase's ancestors a debugging session.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 `avito/document_test.go`:
 
@@ -833,7 +804,7 @@ func TestDocumentCheck(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run it and watch it fail**
+- [x] **Step 2: Run it and watch it fail**
 
 ```bash
 cd S:/Projects/Avito_Go && go test ./avito/ -run TestDocumentCheck -v
@@ -841,7 +812,7 @@ cd S:/Projects/Avito_Go && go test ./avito/ -run TestDocumentCheck -v
 
 Expected: FAIL — `undefined: Document`.
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 `avito/document.go`:
 
@@ -895,7 +866,7 @@ func (d Document) Check() error {
 }
 ```
 
-- [ ] **Step 4: Run the tests and watch them pass**
+- [x] **Step 4: Run the tests and watch them pass**
 
 ```bash
 cd S:/Projects/Avito_Go && go test ./avito/ -run TestDocumentCheck -v
@@ -903,7 +874,7 @@ cd S:/Projects/Avito_Go && go test ./avito/ -run TestDocumentCheck -v
 
 Expected: PASS, all sub-tests including "still compressed".
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd S:/Projects/Avito_Go && git add avito/document.go avito/document_test.go && git commit -m "$(cat <<'MSG'
@@ -934,7 +905,7 @@ MSG
 - Consumes: `Document` (Task 4).
 - Produces: `type WallHit struct { Marker, Label string }`; `func (d Document) Wall() (WallHit, bool)`; `const LabelIPBlock, LabelHardIPBlock, LabelSlider, LabelGeetest, LabelRestricted, LabelWAF, LabelRateLimit`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 `avito/wall_test.go`:
 
@@ -978,13 +949,13 @@ func TestDocumentWall(t *testing.T) {
 // tester a debugging session by its absence: markers are matched against a
 // body whose case the site does not guarantee.
 func TestWallMarkersAreCaseInsensitive(t *testing.T) {
-	if _, ok := Document{Body: []byte("PROBLEMA... Проблема С IP")}.Wall(); !ok {
+	if _, ok := (Document{Body: []byte("PROBLEMA... Проблема С IP")}).Wall(); !ok {
 		t.Error("a marker differing only in case was missed")
 	}
 }
 ```
 
-- [ ] **Step 2: Run it and watch it fail**
+- [x] **Step 2: Run it and watch it fail**
 
 ```bash
 cd S:/Projects/Avito_Go && go test ./avito/ -run 'TestDocumentWall|TestWallMarkers' -v
@@ -992,7 +963,7 @@ cd S:/Projects/Avito_Go && go test ./avito/ -run 'TestDocumentWall|TestWallMarke
 
 Expected: FAIL — `undefined: LabelIPBlock`.
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 `avito/wall.go`:
 
@@ -1050,7 +1021,7 @@ func (d Document) Wall() (WallHit, bool) {
 }
 ```
 
-- [ ] **Step 4: Run the tests and watch them pass**
+- [x] **Step 4: Run the tests and watch them pass**
 
 ```bash
 cd S:/Projects/Avito_Go && go test ./avito/ -run 'TestDocumentWall|TestWallMarkers' -v
@@ -1058,7 +1029,7 @@ cd S:/Projects/Avito_Go && go test ./avito/ -run 'TestDocumentWall|TestWallMarke
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd S:/Projects/Avito_Go && git add avito/wall.go avito/wall_test.go && git commit -m "$(cat <<'MSG'
@@ -1089,7 +1060,7 @@ MSG
 
 These are unexported: they are the package's own tools, and every one of them exists to make a specific documented failure impossible.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 `avito/scripts_test.go`:
 
@@ -1191,7 +1162,7 @@ func TestSubtreeTextTakesNestedText(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run it and watch it fail**
+- [x] **Step 2: Run it and watch it fail**
 
 ```bash
 cd S:/Projects/Avito_Go && go test ./avito/ -run 'TestScript|TestSubtree' -v
@@ -1199,7 +1170,7 @@ cd S:/Projects/Avito_Go && go test ./avito/ -run 'TestScript|TestSubtree' -v
 
 Expected: FAIL — `undefined: scriptTextByAttr`.
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 `avito/scripts.go`:
 
@@ -1390,7 +1361,7 @@ func subtreeText(z *html.Tokenizer, tag []byte) string {
 }
 ```
 
-- [ ] **Step 4: Run the tests and watch them pass**
+- [x] **Step 4: Run the tests and watch them pass**
 
 ```bash
 cd S:/Projects/Avito_Go && go test ./avito/ -run 'TestScript|TestSubtree' -v && go vet ./avito/
@@ -1398,7 +1369,7 @@ cd S:/Projects/Avito_Go && go test ./avito/ -run 'TestScript|TestSubtree' -v && 
 
 Expected: PASS on all five; `go vet` clean.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd S:/Projects/Avito_Go && git add avito/scripts.go avito/scripts_test.go && git commit -m "$(cat <<'MSG'
@@ -1436,7 +1407,7 @@ MSG
 - Consumes: `Document`, `Page`, `Listing`, `ExtractionReport`, `scriptTextByAttr`, `RoublesToMinor` (Tasks 2–6).
 - Produces: `func extractDesktopState(d Document) (Page, bool)`; `const RuleDesktopCatalog = "desktop.catalog.v1"`, `RuleDesktopProbe = "desktop.catalog.probe"`, `RuleDesktopRedirect = "desktop.redirect.v1"`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 `avito/state_desktop_test.go`:
 
@@ -1569,7 +1540,7 @@ func TestExtractDesktopStateRedirect(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run it and watch it fail**
+- [x] **Step 2: Run it and watch it fail**
 
 ```bash
 cd S:/Projects/Avito_Go && go test ./avito/ -run TestExtractDesktopState -v
@@ -1577,7 +1548,7 @@ cd S:/Projects/Avito_Go && go test ./avito/ -run TestExtractDesktopState -v
 
 Expected: FAIL — `undefined: extractDesktopState`.
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 `avito/state_desktop.go`:
 
@@ -1884,7 +1855,7 @@ func brandSlug(link string) string {
 }
 ```
 
-- [ ] **Step 4: Run the tests and watch them pass**
+- [x] **Step 4: Run the tests and watch them pass**
 
 ```bash
 cd S:/Projects/Avito_Go && go test ./avito/ -run TestExtractDesktopState -v && go vet ./avito/
@@ -1892,7 +1863,7 @@ cd S:/Projects/Avito_Go && go test ./avito/ -run TestExtractDesktopState -v && g
 
 Expected: PASS on all four; `go vet` clean.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd S:/Projects/Avito_Go && git add avito/state_desktop.go avito/state_desktop_test.go && git commit -m "$(cat <<'MSG'
@@ -1931,7 +1902,7 @@ MSG
 - Consumes: `Document`, `Page`, `textOfMarker`, `attrOf`, `DigitsToMinor`.
 - Produces: `func extractDesktopDOM(d Document) (Page, bool)`; `const RuleDesktopMicrodata = "desktop.microdata.v1"`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 `avito/dom_desktop_test.go`:
 
@@ -1995,7 +1966,7 @@ func TestDesktopDOMIgnoresClasses(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run it and watch it fail**
+- [x] **Step 2: Run it and watch it fail**
 
 ```bash
 cd S:/Projects/Avito_Go && go test ./avito/ -run TestExtractDesktopDOM -v
@@ -2003,7 +1974,7 @@ cd S:/Projects/Avito_Go && go test ./avito/ -run TestExtractDesktopDOM -v
 
 Expected: FAIL — `undefined: extractDesktopDOM`.
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 `avito/dom_desktop.go`:
 
@@ -2180,7 +2151,7 @@ func attrOfItemprop(body []byte, name, want string) (string, bool) {
 }
 ```
 
-- [ ] **Step 4: Run the tests and watch them pass**
+- [x] **Step 4: Run the tests and watch them pass**
 
 ```bash
 cd S:/Projects/Avito_Go && go test ./avito/ -run TestExtractDesktopDOM -v && go vet ./avito/
@@ -2188,7 +2159,7 @@ cd S:/Projects/Avito_Go && go test ./avito/ -run TestExtractDesktopDOM -v && go 
 
 Expected: PASS on both.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd S:/Projects/Avito_Go && git add avito/dom_desktop.go avito/dom_desktop_test.go && git commit -m "$(cat <<'MSG'
@@ -2222,7 +2193,7 @@ MSG
 
 The mobile surface is the default collection surface, so this is the extractor that runs most. It has no hydration catalogue: `dom` here is the primary path and not a degradation.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 `avito/mobile_test.go`:
 
@@ -2348,7 +2319,7 @@ func TestExtractMobileIDMismatch(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run it and watch it fail**
+- [x] **Step 2: Run it and watch it fail**
 
 ```bash
 cd S:/Projects/Avito_Go && go test ./avito/ -run 'TestFirstJSString|TestExtractMobile' -v
@@ -2356,7 +2327,7 @@ cd S:/Projects/Avito_Go && go test ./avito/ -run 'TestFirstJSString|TestExtractM
 
 Expected: FAIL — `undefined: firstJSString`, `undefined: extractMobile`.
 
-- [ ] **Step 3: Write the two files**
+- [x] **Step 3: Write the two files**
 
 `avito/state_mobile.go`:
 
@@ -2375,10 +2346,10 @@ import (
 // is — weaker than an attribute, and the caller records that it was used.
 const initialDataPrefix = "window.__initialData__"
 
-// mobileState is the part of __initialData__ this package reads. The listings
+// mobileSearchState is the part of __initialData__ this package reads. The listings
 // are NOT in it — measured: urlPath and priceDetailed appear zero times — they
 // are the server-rendered cards. What is here is what the classifier needs.
-type mobileState struct {
+type mobileSearchState struct {
 	Search struct {
 		Count       *int64 `json:"count"`
 		MainCount   *int64 `json:"mainCount"`
@@ -2416,22 +2387,22 @@ func firstJSString(s string) (string, bool) {
 
 // readMobileState finds and decodes window.__initialData__. It is a JS string
 // literal holding JSON text, so it unmarshals twice.
-func readMobileState(body []byte) (mobileState, bool) {
+func readMobileState(body []byte) (mobileSearchState, bool) {
 	text, ok := scriptTextByPrefix(body, initialDataPrefix)
 	if !ok {
-		return mobileState{}, false
+		return mobileSearchState{}, false
 	}
 	lit, ok := firstJSString(text)
 	if !ok {
-		return mobileState{}, false
+		return mobileSearchState{}, false
 	}
 	var inner string
 	if err := json.Unmarshal([]byte(lit), &inner); err != nil {
-		return mobileState{}, false
+		return mobileSearchState{}, false
 	}
-	var st mobileState
+	var st mobileSearchState
 	if err := json.Unmarshal([]byte(inner), &st); err != nil {
-		return mobileState{}, false
+		return mobileSearchState{}, false
 	}
 	return st, true
 }
@@ -2618,7 +2589,7 @@ func attrOfMarker(body []byte, name, want string) (string, bool) {
 }
 ```
 
-- [ ] **Step 4: Run the tests and watch them pass**
+- [x] **Step 4: Run the tests and watch them pass**
 
 ```bash
 cd S:/Projects/Avito_Go && go test ./avito/ -run 'TestFirstJSString|TestExtractMobile' -v && go vet ./avito/
@@ -2626,7 +2597,7 @@ cd S:/Projects/Avito_Go && go test ./avito/ -run 'TestFirstJSString|TestExtractM
 
 Expected: PASS on all four.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd S:/Projects/Avito_Go && git add avito/state_mobile.go avito/dom_mobile.go avito/mobile_test.go && git commit -m "$(cat <<'MSG'
@@ -2666,7 +2637,7 @@ MSG
 
 This is what turns the design's «предположительно» removal guess into a stated fact, so it is not optional and it is not later.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 `avito/item_test.go`:
 
@@ -2741,7 +2712,7 @@ func TestExtractItemClosed(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run it and watch it fail**
+- [x] **Step 2: Run it and watch it fail**
 
 ```bash
 cd S:/Projects/Avito_Go && go test ./avito/ -run TestExtractItem -v
@@ -2749,7 +2720,7 @@ cd S:/Projects/Avito_Go && go test ./avito/ -run TestExtractItem -v
 
 Expected: FAIL — `undefined: extractItem`.
 
-- [ ] **Step 3: Write the implementation**
+- [x] **Step 3: Write the implementation**
 
 `avito/item.go`:
 
@@ -2848,7 +2819,7 @@ func DigitsToInt(label string) (int64, bool) {
 }
 ```
 
-- [ ] **Step 4: Run the tests and watch them pass**
+- [x] **Step 4: Run the tests and watch them pass**
 
 ```bash
 cd S:/Projects/Avito_Go && go test ./avito/ -run TestExtractItem -v && go vet ./avito/
@@ -2856,7 +2827,7 @@ cd S:/Projects/Avito_Go && go test ./avito/ -run TestExtractItem -v && go vet ./
 
 Expected: PASS on both.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd S:/Projects/Avito_Go && git add avito/item.go avito/item_test.go && git commit -m "$(cat <<'MSG'
@@ -2888,7 +2859,7 @@ MSG
 - Consumes: every extractor above.
 - Produces: `type Options struct { Now int64; AuditDOM bool }`; `func Extract(d Document, opt Options) (Page, error)`; `var ErrNoExtractor error`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 `avito/extract_test.go`:
 
@@ -3008,7 +2979,7 @@ func TestExtractAuditRunsBothPaths(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run it and watch it fail**
+- [x] **Step 2: Run it and watch it fail**
 
 ```bash
 cd S:/Projects/Avito_Go && go test ./avito/ -run TestExtract -v
@@ -3016,7 +2987,7 @@ cd S:/Projects/Avito_Go && go test ./avito/ -run TestExtract -v
 
 Expected: FAIL — `undefined: Extract`, `undefined: Options`, `page.Audit undefined`.
 
-- [ ] **Step 3: Add `Audit` to the model, then write `Extract`**
+- [x] **Step 3: Add `Audit` to the model, then write `Extract`**
 
 Append to `avito/model.go`, inside the `Page` struct, immediately before `Report ExtractionReport`:
 
@@ -3135,15 +3106,15 @@ func auditAgainstDOM(d Document, primary Page) *AuditResult {
 }
 ```
 
-- [ ] **Step 4: Run the whole suite**
+- [x] **Step 4: Run the whole suite**
 
 ```bash
-cd S:/Projects/Avito_Go && go test ./avito/ -v && go vet ./avito/ && make check-no-net
+cd S:/Projects/Avito_Go && go test ./avito/ -v && go vet ./avito/ && go test ./avito/ -run TestPackageReachesNoNetwork
 ```
 
-Expected: every test PASSes; `go vet` clean; `ok   avito is offline`.
+Expected: every test PASSes; `go vet` clean.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd S:/Projects/Avito_Go && git add avito/extract.go avito/extract_test.go avito/model.go && git commit -m "$(cat <<'MSG'
@@ -3179,7 +3150,7 @@ MSG
 - Consumes: `avito.Extract`, `avito.Document`, `avito.Options`.
 - Produces: two binaries. `avitoparse` is the offline debugging tool; `avitocapture` is how a fixture is made.
 
-- [ ] **Step 1: Write `avitoparse`**
+- [x] **Step 1: Write `avitoparse`**
 
 `cmd/avitoparse/main.go`:
 
@@ -3291,7 +3262,7 @@ func readMaybeGzip(path string) ([]byte, error) {
 }
 ```
 
-- [ ] **Step 2: Build it and run it against a real fixture**
+- [x] **Step 2: Build it and run it against a real fixture**
 
 ```bash
 cd S:/Projects/Avito_Go && go build ./cmd/avitoparse && ./avitoparse avito/testdata/desktop-canonical-p1.html.gz | head -8
@@ -3319,7 +3290,7 @@ Expected: `kind=redirect rule=desktop.redirect.v1`, then a `canonical:` line.
 
 If any of these disagree, the bug is in the extractor and not in the command: go back and fix it before continuing. These four are the increment's acceptance criteria.
 
-- [ ] **Step 3: Write `avitocapture`**
+- [x] **Step 3: Write `avitocapture`**
 
 `cmd/avitocapture/main.go`:
 
@@ -3451,15 +3422,15 @@ func insecureTLS() *tls.Config {
 
 with `"crypto/tls"` added to the imports.
 
-- [ ] **Step 4: Build both and confirm `avito/` is still offline**
+- [x] **Step 4: Build both and confirm `avito/` is still offline**
 
 ```bash
-cd S:/Projects/Avito_Go && go build ./... && make check-no-net && go vet ./...
+cd S:/Projects/Avito_Go && go build ./... && go test ./avito/ -run TestPackageReachesNoNetwork && go vet ./...
 ```
 
-Expected: builds; `ok   avito is offline` (the command imports `net/http`, the package does not); vet clean.
+Expected: builds; the offline test still passes (the command imports `net/http`, the package does not); vet clean.
 
-- [ ] **Step 5: Capture the two fixtures that are still missing**
+- [x] **Step 5: Capture the two fixtures that are still missing**
 
 An item page and a soft block. BlankTrail must be running; use a port opened for the surface you want.
 
@@ -3475,7 +3446,7 @@ Expected: `kind=item rule=item.markers.v1`, one listing with a price and a view 
 If that listing has since been removed, take any live item URL from
 `./avitoparse avito/testdata/desktop-canonical-p1.html.gz` and use that instead.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 cd S:/Projects/Avito_Go && git add cmd/ avito/testdata/ && git commit -m "$(cat <<'MSG'
@@ -3509,7 +3480,7 @@ MSG
 
 The golden file pins the **whole** `Page`, `ExtractionReport` included. Fifty listings reached by the DOM path instead of the state path is exactly the regression this design exists to catch, and a fixture pinning only the items would let it pass green.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 `avito/golden_test.go`:
 
@@ -3673,7 +3644,7 @@ func TestDesktopPathsAgree(t *testing.T) {
 
 ```
 
-- [ ] **Step 2: Run it and watch it fail**
+- [x] **Step 2: Run it and watch it fail**
 
 ```bash
 cd S:/Projects/Avito_Go && go test ./avito/ -run TestGolden -v
@@ -3681,7 +3652,7 @@ cd S:/Projects/Avito_Go && go test ./avito/ -run TestGolden -v
 
 Expected: FAIL — no `.want.json` files yet, and the message tells you to run with `-update`.
 
-- [ ] **Step 3: Generate the goldens, then read them**
+- [x] **Step 3: Generate the goldens, then read them**
 
 ```bash
 cd S:/Projects/Avito_Go && go test ./avito/ -run TestGolden -update && ls avito/testdata/*.want.json
@@ -3701,17 +3672,17 @@ for p in sorted(glob.glob('avito/testdata/*.want.json')):
 
 Expected, and check every line: the shell is `redirect`, the canonical page is `catalog`/`desktop.catalog.v1`/`state` with 50 listings, the seller page the same rule with 45, mobile is `mobile.cards.v1`/`dom` with 30, and the empty mobile page the same rule with 0. **Any `warnings` count above zero on a healthy fixture needs explaining before you commit it.**
 
-- [ ] **Step 4: Run the whole suite**
+- [x] **Step 4: Run the whole suite**
 
 ```bash
-cd S:/Projects/Avito_Go && go test ./avito/ -v && make check-no-net
+cd S:/Projects/Avito_Go && go test ./avito/ -v && go test ./avito/ -run TestPackageReachesNoNetwork
 ```
 
-Expected: all PASS, including `TestGoldenExpectations` and `TestDesktopPathsAgree`.
+Expected: all PASS, including `TestPackageReachesNoNetwork`, `TestGoldenExpectations` and `TestDesktopPathsAgree`.
 
 If `TestGoldenExpectations` fails on the seller page's count of 45, correct the number in the test to whatever `avitoparse` actually reports for that fixture and say so in the commit message — the 45 came from counting `urlPath` occurrences during measurement, which counts promoted rows the extractor may legitimately drop.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd S:/Projects/Avito_Go && git add avito/golden_test.go avito/testdata/ && git commit -m "$(cat <<'MSG'
@@ -3744,7 +3715,7 @@ MSG
 
 The design makes four claims about surviving markup change. Each is derived in code from the real fixture, so the claim is proved against the page Avito actually serves rather than against a hand-written sample that happens to satisfy it.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 `avito/mutation_test.go`:
 
@@ -3826,10 +3797,19 @@ func TestMutationEntityInTitle(t *testing.T) {
 	const marker = "Ремонт &amp; отделка"
 	after, err := mutateFixture(t, "desktop-canonical-p1", func(b []byte) []byte {
 		// Rewrite the first title in the state block, entities and all.
-		i := bytes.Index(b, []byte(`"title":"`))
-		if i < 0 {
-			t.Fatal(`no "title": in the fixture`)
+		// Anchor on the first urlPath, not on the first title: the earliest
+		// "title" in this document is «Показать большие фото», a control's
+		// label, and injecting there would test nothing while looking as
+		// though it had.
+		u := bytes.Index(b, []byte(`"urlPath":"`))
+		if u < 0 {
+			t.Fatal(`no "urlPath": in the fixture`)
 		}
+		i := bytes.Index(b[u:], []byte(`"title":"`))
+		if i < 0 {
+			t.Fatal(`no "title": after the first listing's urlPath`)
+		}
+		i += u
 		start := i + len(`"title":"`)
 		end := bytes.IndexByte(b[start:], '"')
 		if end < 0 {
@@ -3933,7 +3913,7 @@ func deleteMFEState(body []byte) []byte {
 }
 ```
 
-- [ ] **Step 2: Run it and watch it fail or pass, and read which**
+- [x] **Step 2: Run it and watch it fail or pass, and read which**
 
 ```bash
 cd S:/Projects/Avito_Go && go test ./avito/ -run TestMutation -v
@@ -3943,15 +3923,15 @@ Expected on a correct implementation: all four PASS. If any fails, the failure i
 
 The likeliest genuine failure is `TestMutationDeleteStateBlock` reporting fewer than 50 listings, because the desktop microdata path drops cards whose `data-item-id` is missing. If so, the fix belongs in `decodeDesktopCard`: fall back to the id embedded in the card's own `itemprop="url"` path before dropping the card.
 
-- [ ] **Step 3: Run the whole suite one final time**
+- [x] **Step 3: Run the whole suite one final time**
 
 ```bash
-cd S:/Projects/Avito_Go && go test ./... -v 2>&1 | tail -30 && make check-no-net && go vet ./...
+cd S:/Projects/Avito_Go && go test ./... -v 2>&1 | tail -30 && go test ./avito/ -run TestPackageReachesNoNetwork && go vet ./...
 ```
 
-Expected: everything PASSes, `ok   avito is offline`, vet clean.
+Expected: everything PASSes, vet clean.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 cd S:/Projects/Avito_Go && git add avito/mutation_test.go avito/ && git commit -m "$(cat <<'MSG'
@@ -3978,7 +3958,7 @@ MSG
 
 ## Done when
 
-- `go test ./...` passes, `make check-no-net` prints `ok   avito is offline`, `go vet ./...` is clean.
+- `go test ./...` passes, `TestPackageReachesNoNetwork` passes, `go vet ./...` is clean.
 - `./avitoparse avito/testdata/desktop-canonical-p1.html.gz` prints 50 listings with `rule=desktop.catalog.v1 path=state`, and the same 50 ids come back from the microdata path under `-update`'s audit.
 - `./avitoparse -surface mobile avito/testdata/mobile-search-30.html.gz` prints 30 listings with `rule=mobile.cards.v1 path=dom` and `total=59959`.
 - `./avitoparse -surface mobile avito/testdata/mobile-search-empty.html.gz` prints `ok=false empty-declared=true total=0`.
