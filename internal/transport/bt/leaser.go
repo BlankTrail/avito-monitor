@@ -191,6 +191,12 @@ type portLease struct {
 
 func (p *portLease) Label() string { return "blanktrail:" + strconv.Itoa(p.Port()) }
 
+// Egress is the exit address, which is not the port. With no channels
+// configured every port leaves through the host's own IP and they all report
+// "direct" — which is the point: the per-address budget must see one address,
+// not one per port.
+func (p *portLease) Egress() string { return p.Lease.Egress().String() }
+
 func (p *portLease) Profile() transport.Profile { return p.prof }
 
 // Warm is always true here. The proxy owns the session and its cookie jar, and

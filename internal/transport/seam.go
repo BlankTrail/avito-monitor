@@ -26,6 +26,19 @@ type Lease interface {
 	// "direct:chrome-131-win#2".
 	Label() string
 
+	// Egress names the exit address, and it is NOT the label.
+	//
+	// The pacer's second budget is per address: sixty requests per ten minutes,
+	// whatever is leaving through it. It was keyed on Label, and Label is per
+	// endpoint — "direct:chrome-133-android#0" through "#3", or
+	// "blanktrail:20000" and ":20011". Four sessions sharing one IP therefore
+	// got four separate windows and four times the budget they were entitled
+	// to, and a soak arm with four jars on one address blew through the address
+	// limit exactly as that arithmetic predicts.
+	//
+	// Endpoints sharing an address MUST return the same string here.
+	Egress() string
+
 	// Profile says who owns which header for this lease.
 	Profile() Profile
 

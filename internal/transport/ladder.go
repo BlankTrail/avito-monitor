@@ -182,7 +182,10 @@ func (f *Fetcher) Fetch(ctx context.Context, target string) (Result, error) {
 	softBlocks := 0
 
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		if err := f.pacer.Wait(ctx, lease.Session(), lease.Label()); err != nil {
+		// Paced on the identity AND on the address. The second argument used to
+		// be Label, which names the endpoint rather than the exit — so four
+		// jars on one IP were granted four separate per-address windows.
+		if err := f.pacer.Wait(ctx, lease.Session(), lease.Egress()); err != nil {
 			return res, err
 		}
 		res.Attempts = attempt

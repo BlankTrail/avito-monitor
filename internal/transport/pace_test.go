@@ -181,3 +181,45 @@ func TestJitterKeepsTheFloor(t *testing.T) {
 			"itself a signal")
 	}
 }
+
+// TestTheAddressBudgetIsKeyedOnTheAddress.
+//
+// The ladder used to pass Lease.Label as the pacer's egress key, and Label
+// names the endpoint: "direct:chrome-133-android#0" through "#3", or
+// "blanktrail:20000" and ":20011". Four jars sharing one IP therefore got four
+// separate per-address windows and four times the budget they were entitled to
+// — and a soak arm with four jars on one address blew through the address limit
+// exactly as that arithmetic predicts.
+func TestTheAddressBudgetIsKeyedOnTheAddress(t *testing.T) {
+	now := time.Date(2026, 8, 23, 12, 0, 0, 0, time.UTC)
+	var slept time.Duration
+	p := NewPacer(PacerConfig{
+		Floor: 0, Ceiling: 3, Window: 10 * time.Minute,
+		Now: func() time.Time { return now },
+		SleepUntil: func(_ context.Context, t time.Time) error {
+			slept += t.Sub(now)
+			now = t
+			return nil
+		},
+	})
+
+	// Four distinct identities, one shared address. The ceiling is three, so
+	// the fourth request must be made to wait however the identities are
+	// spread — that is what "per address" means.
+	for i := 0; i < 3; i++ {
+		if err := p.Wait(context.Background(), "identity-"+itoa(i), "one-address"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if slept != 0 {
+		t.Fatalf("slept %v inside the ceiling; nothing should wait yet", slept)
+	}
+	if err := p.Wait(context.Background(), "identity-3", "one-address"); err != nil {
+		t.Fatal(err)
+	}
+	if slept == 0 {
+		t.Error("the fourth request on a shared address did not wait; the " +
+			"ceiling is per address, and four identities behind one IP do not " +
+			"get four budgets")
+	}
+}

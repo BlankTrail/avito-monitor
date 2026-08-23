@@ -43,8 +43,13 @@ func (l *recordingLease) Do(*http.Request) (*http.Response, error) {
 	}, nil
 }
 
-func (l *recordingLease) Session() string  { return "sess-" + itoa(l.sessions) }
-func (l *recordingLease) Label() string    { return "test:1" }
+func (l *recordingLease) Session() string { return "sess-" + itoa(l.sessions) }
+func (l *recordingLease) Label() string   { return "test:1" }
+
+// Egress is deliberately constant across rotations here: this fake has one
+// exit, and a test that wanted several would say so.
+func (l *recordingLease) Egress() string { return "test-egress" }
+
 func (l *recordingLease) Profile() Profile { return Profile{} }
 func (l *recordingLease) Warm() bool       { return l.warm }
 func (l *recordingLease) Release()         {}

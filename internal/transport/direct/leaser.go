@@ -302,6 +302,16 @@ func (x *sessionLease) RenewIdentity(ctx context.Context) error {
 	return x.s.warmUp(ctx, x.l.cfg.Root)
 }
 
+// Egress is the exit address, which is not the session. Sessions with no
+// upstream all leave through the host's own IP and all report "direct": the
+// per-address budget must count one address there, not one per jar.
+func (x *sessionLease) Egress() string {
+	if x.s.egress == "" {
+		return "direct"
+	}
+	return x.s.egress
+}
+
 // Recycle replaces everything about this endpoint except the address: the
 // fingerprint, the jar, the session and the connections. It is what this mode
 // has in place of closing a port, and it is the remedy for a soft block.
