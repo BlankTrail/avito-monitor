@@ -4,7 +4,7 @@
 
 **Goal:** Turn a captured Avito page into a `Page` of typed listings, on four surfaces, with no network and no regular expressions, and prove it survives the markup changes Avito actually makes.
 
-**Architecture:** One package, `avito/`, that imports no `net` and no `net/http` and takes its clock as a parameter — enforced by a `make check-no-net` target, so every test in it is offline by construction. Four named extraction rules run over `golang.org/x/net/html`: `desktop.catalog.v1` reads the `data-mfe-state` JSON, `desktop.microdata.v1` reads the same page's server-rendered cards as an independent second opinion, `mobile.cards.v1` reads `window.__initialData__` plus the `item-wrapper(<id>)` cards, and `item.markers.v1` reads an item page's `data-marker` handles. Every extraction records **which rule answered** in an `ExtractionReport`, because a silent switch of path is the earliest warning this install has been classified as a bot.
+**Architecture:** One package, `avito/`, that imports no `net` and no `net/http` and takes its clock as a parameter — enforced by a test in the package itself, so every test in it is offline by construction. Four named extraction rules run over `golang.org/x/net/html`: `desktop.catalog.v1` reads the `data-mfe-state` JSON, `desktop.microdata.v1` reads the same page's server-rendered cards as an independent second opinion, `mobile.cards.v1` reads `window.__initialData__` plus the `item-wrapper(<id>)` cards, and `item.markers.v1` reads an item page's `data-marker` handles. Every extraction records **which rule answered** in an `ExtractionReport`, because a silent switch of path is the earliest warning this install has been classified as a bot.
 
 **Tech Stack:** Go 1.26, no CGO. One direct dependency this increment: `golang.org/x/net` (for `html`). Standard library otherwise — `encoding/json`, `unicode`, `strings`, `compress/gzip`.
 
@@ -14,7 +14,7 @@
 
 - Module path `github.com/BlankTrail/avito-monitor`. Go directive `1.26.0`.
 - **No CGO on any platform.** One machine cross-compiles every release.
-- `avito/` must not import `net`, `net/http`, `time.Now`, or any database package. `make check-no-net` enforces the first two and fails the build.
+- `avito/` must not import `net`, `net/http`, `time.Now`, or any database package. `TestPackageReachesNoNetwork` enforces the first two and fails the suite.
 - **No regular expressions over markup, anywhere.** Not `regexp`, not `strings.Split` on a tag. Elements are resolved with `golang.org/x/net/html` and their subtree text is taken; JSON is decoded with `encoding/json`. This is an owner requirement and the reason the package exists in this shape.
 - **Never `html.UnescapeString`.** `x/net/html` has already decided: `Text()` returns raw bytes for script data, `TagAttr` returns attribute values already unescaped. Unescaping either corrupts a title carrying a literal `&amp;` and there is no error anywhere when it happens.
 - **Every byte kept from the tokenizer is copied.** `Text()` and `TagAttr` slices are invalid after the next `Next()`. The bug reproduces only on documents large enough for the buffer to be reused — that is, only in production.
@@ -28,7 +28,7 @@
 
 | File | Responsibility |
 |---|---|
-| `go.mod`, `Makefile` | module, and the `check-no-net` guard |
+| `go.mod` | the module. There is no task runner: WB_GO has none either, and its CI is plain `go build`, `go vet`, `go test -race` — nothing for a contributor to install. |
 | `avito/doc.go` | package doc: what it refuses to import and why |
 | `avito/money.go` | `Money`, `RoublesToMinor`, `DigitsToMinor` |
 | `avito/model.go` | `Surface`, `Path`, `EnvelopeKind`, `PriceKind`, `Listing`, `Page` |
@@ -53,12 +53,12 @@
 ### Task 1: Module, the no-net guard, and the first fixture on disk
 
 **Files:**
-- Create: `go.mod`, `Makefile`, `avito/doc.go`, `avito/deps_test.go`
+- Create: `go.mod`, `avito/doc.go`, `avito/deps_test.go`
 - Create: `avito/testdata/README.md`
 
 **Interfaces:**
 - Consumes: nothing.
-- Produces: package `avito` at `github.com/BlankTrail/avito-monitor/avito`; `make check-no-net`.
+- Produces: package `avito` at `github.com/BlankTrail/avito-monitor/avito`; `TestPackageReachesNoNetwork`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -162,36 +162,7 @@ cd S:/Projects/Avito_Go && go test ./avito/ -v
 
 Expected: PASS (`TestPackageReachesNoNetwork`).
 
-- [ ] **Step 5: Add the Makefile target that makes it a build gate**
-
-`Makefile`:
-
-```make
-.PHONY: all test check-no-net lint
-
-all: test check-no-net
-
-test:
-	go test ./...
-
-# The same property TestPackageReachesNoNetwork asserts, as a build gate, so a
-# CI run that skips tests still catches it.
-check-no-net:
-	@if go list -deps ./avito/ | grep -qx 'net\|net/http'; then \
-		echo "FAIL: package avito reaches the network"; exit 1; \
-	else echo "ok   avito is offline"; fi
-
-lint:
-	go vet ./...
-```
-
-```bash
-cd S:/Projects/Avito_Go && make check-no-net
-```
-
-Expected: `ok   avito is offline`
-
-- [ ] **Step 6: Move the captured fixtures into the package**
+- [ ] **Step 5: Move the captured fixtures into the package**
 
 The five pages already captured live in `docs/measurements/fixtures/`. Copy them where the tests will read them, keeping the gzip:
 
@@ -224,10 +195,10 @@ They carry third-party personal data and must be scrubbed before this
 repository is published. See `docs/measurements/fixtures/README.md`.
 ```
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
-cd S:/Projects/Avito_Go && git add go.mod go.sum Makefile avito/ && git commit -m "$(cat <<'MSG'
+cd S:/Projects/Avito_Go && git add go.mod avito/ && git commit -m "$(cat <<'MSG'
 feat(avito): the module, and a package that cannot reach the network
 
 An extractor that can reach the network grows a test that does, and that test
@@ -3138,10 +3109,10 @@ func auditAgainstDOM(d Document, primary Page) *AuditResult {
 - [ ] **Step 4: Run the whole suite**
 
 ```bash
-cd S:/Projects/Avito_Go && go test ./avito/ -v && go vet ./avito/ && make check-no-net
+cd S:/Projects/Avito_Go && go test ./avito/ -v && go vet ./avito/ && go test ./avito/ -run TestPackageReachesNoNetwork
 ```
 
-Expected: every test PASSes; `go vet` clean; `ok   avito is offline`.
+Expected: every test PASSes; `go vet` clean.
 
 - [ ] **Step 5: Commit**
 
@@ -3454,10 +3425,10 @@ with `"crypto/tls"` added to the imports.
 - [ ] **Step 4: Build both and confirm `avito/` is still offline**
 
 ```bash
-cd S:/Projects/Avito_Go && go build ./... && make check-no-net && go vet ./...
+cd S:/Projects/Avito_Go && go build ./... && go test ./avito/ -run TestPackageReachesNoNetwork && go vet ./...
 ```
 
-Expected: builds; `ok   avito is offline` (the command imports `net/http`, the package does not); vet clean.
+Expected: builds; the offline test still passes (the command imports `net/http`, the package does not); vet clean.
 
 - [ ] **Step 5: Capture the two fixtures that are still missing**
 
@@ -3704,10 +3675,10 @@ Expected, and check every line: the shell is `redirect`, the canonical page is `
 - [ ] **Step 4: Run the whole suite**
 
 ```bash
-cd S:/Projects/Avito_Go && go test ./avito/ -v && make check-no-net
+cd S:/Projects/Avito_Go && go test ./avito/ -v && go test ./avito/ -run TestPackageReachesNoNetwork
 ```
 
-Expected: all PASS, including `TestGoldenExpectations` and `TestDesktopPathsAgree`.
+Expected: all PASS, including `TestPackageReachesNoNetwork`, `TestGoldenExpectations` and `TestDesktopPathsAgree`.
 
 If `TestGoldenExpectations` fails on the seller page's count of 45, correct the number in the test to whatever `avitoparse` actually reports for that fixture and say so in the commit message — the 45 came from counting `urlPath` occurrences during measurement, which counts promoted rows the extractor may legitimately drop.
 
@@ -3946,10 +3917,10 @@ The likeliest genuine failure is `TestMutationDeleteStateBlock` reporting fewer 
 - [ ] **Step 3: Run the whole suite one final time**
 
 ```bash
-cd S:/Projects/Avito_Go && go test ./... -v 2>&1 | tail -30 && make check-no-net && go vet ./...
+cd S:/Projects/Avito_Go && go test ./... -v 2>&1 | tail -30 && go test ./avito/ -run TestPackageReachesNoNetwork && go vet ./...
 ```
 
-Expected: everything PASSes, `ok   avito is offline`, vet clean.
+Expected: everything PASSes, vet clean.
 
 - [ ] **Step 4: Commit**
 
@@ -3978,7 +3949,7 @@ MSG
 
 ## Done when
 
-- `go test ./...` passes, `make check-no-net` prints `ok   avito is offline`, `go vet ./...` is clean.
+- `go test ./...` passes, `TestPackageReachesNoNetwork` passes, `go vet ./...` is clean.
 - `./avitoparse avito/testdata/desktop-canonical-p1.html.gz` prints 50 listings with `rule=desktop.catalog.v1 path=state`, and the same 50 ids come back from the microdata path under `-update`'s audit.
 - `./avitoparse -surface mobile avito/testdata/mobile-search-30.html.gz` prints 30 listings with `rule=mobile.cards.v1 path=dom` and `total=59959`.
 - `./avitoparse -surface mobile avito/testdata/mobile-search-empty.html.gz` prints `ok=false empty-declared=true total=0`.
