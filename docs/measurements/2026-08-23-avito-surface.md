@@ -246,3 +246,28 @@ The desktop DOM fallback does **not** cover a seller page: it selects on `data-m
 which a seller page does not use. The cross-path audit is therefore a search-page calibration
 only, and on a seller page it reports every listing as state-only. That is honest rather than
 broken, but it means a seller watch has no second opinion if Avito withholds the state block.
+
+## 17. Two things learned while capturing the item page
+
+**Go cannot use BlankTrail's SOCKS port for this.** `http.Transport.Proxy` accepts a
+`socks5://` URL and resolves the hostname **locally**, then connects to the address; Go has no
+`socks5h://`. BlankTrail's MITM needs the hostname for SNI and for the certificate it mints, so
+the connection dies as an EOF at the SOCKS handshake. An HTTP CONNECT port works, because
+CONNECT carries the hostname. Increment 2's transport must either open HTTP ports or bring its
+own dialler — this is not a capture-tool quirk, it is a property of the standard library.
+
+**Sellers write with homoglyphs.** The captured item's own description begins
+«💙 iPhоne 15, 128 ГБ, Hовый, Opигинaльный…» — the `о` in "iPhоne" is Cyrillic U+043E, the `H`
+in "Hовый" is Latin, and there are more. It is deliberate, and it is how a seller dodges
+keyword filters.
+
+Two consequences, both for later increments. A user's negative keyword filter («исключить
+ремонт») will miss text written this way. And the repost linker folds a title to a digest and
+treats an exact match as a gate — two incarnations of one advertisement whose titles differ by
+one confusable character would not link, which is a false negative in the direction the design
+already prefers, but it is a measurable loss rather than a theoretical one. Whatever fold is
+chosen should be measured against real titles before its threshold is trusted.
+
+Verified extraction from the real item page: id 7775028313, price 26 490 ₽ → 2 649 000 minor,
+**ViewsTotal 14947 and ViewsToday 21** — views are public and cost one request, exactly as
+measured during discovery.
