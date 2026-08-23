@@ -10,12 +10,89 @@ import (
 
 const (
 	RuleDesktopCatalog  = "desktop.catalog.v1"
+	RuleDesktopProfile  = "desktop.profile.v1"
 	RuleDesktopProbe    = "desktop.catalog.probe"
 	RuleDesktopRedirect = "desktop.redirect.v1"
 )
 
 // mfeStateAttr is what the state block is selected by. Never the script type.
 const mfeStateAttr = "data-mfe-state"
+
+// dig walks a path of object keys and returns the raw value at the end of it,
+// or nil if any step is missing or is not an object.
+func dig(root json.RawMessage, path ...string) json.RawMessage {
+	cur := root
+	for _, key := range path {
+		var obj map[string]json.RawMessage
+		if err := json.Unmarshal(cur, &obj); err != nil {
+			return nil
+		}
+		next, ok := obj[key]
+		if !ok {
+			return nil
+		}
+		cur = next
+	}
+	return cur
+}
+
+// itemsAt reads an items array and the count that belongs beside it.
+func itemsAt(root json.RawMessage, countKey string, path ...string) ([]json.RawMessage, *int64, bool) {
+	node := dig(root, path...)
+	if node == nil {
+		return nil, nil, false
+	}
+	var box struct {
+		Items []json.RawMessage `json:"items"`
+	}
+	if err := json.Unmarshal(node, &box); err != nil || len(box.Items) == 0 {
+		return nil, nil, false
+	}
+	var counts map[string]json.RawMessage
+	var total *int64
+	if json.Unmarshal(node, &counts) == nil {
+		if raw, ok := counts[countKey]; ok {
+			var n int64
+			if json.Unmarshal(raw, &n) == nil {
+				total = &n
+			}
+		}
+	}
+	return box.Items, total, true
+}
+
+// stateRule is one named way of finding the listings inside the state block.
+//
+// They are tried in order and the one that answered is recorded, because the
+// answer is a fact about the page rather than an implementation detail: a run
+// where a different rule starts answering is a page whose structure moved.
+type stateRule struct {
+	name string
+	find func(root json.RawMessage) ([]json.RawMessage, *int64, bool)
+}
+
+// stateRules is the ordered table. Two envelopes are known and they share
+// nothing at the top: a search page is loaderData.data.catalog, a seller page
+// is state.searchData.profileCatalog with no loaderData at all. Both carry the
+// same item objects underneath, which is why one decoder serves both.
+var stateRules = []stateRule{
+	{RuleDesktopCatalog, func(r json.RawMessage) ([]json.RawMessage, *int64, bool) {
+		items, total, ok := itemsAt(r, "totalCount", "loaderData", "data", "catalog")
+		if ok && total == nil {
+			// A search page states the count one level up from its catalogue.
+			if raw := dig(r, "loaderData", "data", "totalCount"); raw != nil {
+				var n int64
+				if json.Unmarshal(raw, &n) == nil {
+					total = &n
+				}
+			}
+		}
+		return items, total, ok
+	}},
+	{RuleDesktopProfile, func(r json.RawMessage) ([]json.RawMessage, *int64, bool) {
+		return itemsAt(r, "totalCount", "state", "searchData", "profileCatalog")
+	}},
+}
 
 // extractDesktopState reads the one data-mfe-state block a desktop page
 // carries. It serves the search page, the seller page and the SPA shell alike:
@@ -25,15 +102,9 @@ func extractDesktopState(d Document) (Page, bool) {
 	if !found {
 		return Page{}, false
 	}
-	var envelope struct {
-		LoaderData struct {
-			Data json.RawMessage `json:"data"`
-		} `json:"loaderData"`
-	}
-	if err := json.Unmarshal([]byte(text), &envelope); err != nil {
-		return Page{}, false
-	}
-	if len(envelope.LoaderData.Data) == 0 {
+	root := json.RawMessage(text)
+	var probeObj map[string]json.RawMessage
+	if err := json.Unmarshal(root, &probeObj); err != nil {
 		return Page{}, false
 	}
 	page := Page{Surface: SurfaceDesktop}
@@ -41,41 +112,39 @@ func extractDesktopState(d Document) (Page, bool) {
 	page.Report.ScriptType = scriptType
 
 	// The shell first: it has no catalogue and its whole content is one URL.
-	var redirect struct {
-		Redirected bool   `json:"redirected"`
-		URL        string `json:"url"`
-	}
-	if err := json.Unmarshal(envelope.LoaderData.Data, &redirect); err == nil &&
-		redirect.Redirected && redirect.URL != "" {
-		page.Kind = EnvelopeRedirect
-		page.CanonicalURL = redirect.URL
-		page.Report.Rule = RuleDesktopRedirect
-		return page, true
+	if data := dig(root, "loaderData", "data"); data != nil {
+		var redirect struct {
+			Redirected bool   `json:"redirected"`
+			URL        string `json:"url"`
+		}
+		if err := json.Unmarshal(data, &redirect); err == nil &&
+			redirect.Redirected && redirect.URL != "" {
+			page.Kind = EnvelopeRedirect
+			page.CanonicalURL = redirect.URL
+			page.Report.Rule = RuleDesktopRedirect
+			return page, true
+		}
 	}
 
-	var data struct {
-		TotalCount *int64 `json:"totalCount"`
-		Catalog    struct {
-			Items []json.RawMessage `json:"items"`
-		} `json:"catalog"`
-	}
-	rule := RuleDesktopCatalog
 	var raw []json.RawMessage
-	if err := json.Unmarshal(envelope.LoaderData.Data, &data); err == nil &&
-		len(data.Catalog.Items) > 0 {
-		raw = data.Catalog.Items
-		page.TotalCount = data.TotalCount
-	} else {
-		// The named rule found nothing. Fall to the shape probe, which matches
-		// on structure rather than on the name "items", and always warns.
-		probe := probeForItems(envelope.LoaderData.Data, 0)
+	rule := ""
+	for _, r := range stateRules {
+		if items, total, ok := r.find(root); ok {
+			raw, page.TotalCount, rule = items, total, r.name
+			break
+		}
+	}
+	if rule == "" {
+		// No named rule answered. Fall to the shape probe, which matches on
+		// structure rather than on any key's name, and always warns.
+		probe := probeForItems(root, 0)
 		if len(probe) == 0 {
 			return Page{}, false
 		}
 		raw = probe
 		rule = RuleDesktopProbe
 		page.Report.Warn(WarnShapeProbe,
-			"items reached by structure, not by desktop.catalog.v1")
+			"items reached by structure; no named rule matched this envelope")
 	}
 
 	page.Kind = EnvelopeCatalog

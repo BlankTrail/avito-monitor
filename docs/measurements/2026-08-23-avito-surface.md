@@ -221,3 +221,28 @@ two strong corroborators, and the other is the image key, which is itself unveri
 mobile it therefore has neither, and an auto-link rests on the weaker
 title-plus-coordinates-plus-price tier. The extractor reads the placeholder and discards it
 rather than not reading it, so the day Avito fills it in there is one place to change.
+
+## 16. Correction: the seller page is a different envelope
+
+§11 said `/brands/<slug>` uses "the same single `data-mfe-state` block" as a search page. The
+block is in the same place; what is inside it is not. Measured while implementing the
+resolver:
+
+| | search page | seller page |
+|---|---|---|
+| top-level keys | `loaderData`, … | `i18n`, `state`, `toggles` — **no `loaderData` at all** |
+| items | `loaderData.data.catalog.items` (50) | `state.searchData.profileCatalog.items` (**15**) |
+| count | `loaderData.data.totalCount` | `state.searchData.profileCatalog.totalCount` (772) |
+
+The 45 `urlPath` occurrences counted in §11 were not 45 listings — the block holds other
+objects carrying that key too.
+
+The item objects underneath are identical in shape (`priceDetailed`, `sortTimeStamp`, `coords`),
+so one decoder serves both and only the path to the array differs. That is what makes the
+resolver an ordered table of NAMED rules rather than one rule plus a probe: two envelopes are
+known, each is named, and the probe stays as the last resort for a third nobody has seen.
+
+The desktop DOM fallback does **not** cover a seller page: it selects on `data-marker="item"`,
+which a seller page does not use. The cross-path audit is therefore a search-page calibration
+only, and on a seller page it reports every listing as state-only. That is honest rather than
+broken, but it means a seller watch has no second opinion if Avito withholds the state block.
