@@ -1,0 +1,17 @@
+{
+  "Surface": "mobile",
+  "Kind": "catalog",
+  "Listings": null,
+  "TotalCount": 0,
+  "EmptyDeclared": true,
+  "CanonicalURL": "",
+  "Audit": null,
+  "Report": {
+    "Rule": "mobile.cards.v1",
+    "Path": "dom",
+    "ScriptType": "",
+    "Found": 0,
+    "Dropped": 0,
+    "Warnings": null
+  }
+}
