@@ -40,6 +40,12 @@ const keyEnv = "AVITOMON_BLANKTRAIL_KEY"
 // not read as a collapse.
 const blockSize = 10
 
+// maxConsecutiveBad ends an arm when the target has plainly stopped answering
+// this address. Three is enough to tell a single refusal from a wall, and small
+// enough that a wall costs minutes rather than hours: each exhausted fetch
+// spends about fifteen minutes climbing the backoff ladder.
+const maxConsecutiveBad = 3
+
 // record is one request. The field names are the JSONL schema; changing one
 // invalidates every file already written, so they are named for what they are
 // rather than for what this run happens to call them.
@@ -105,6 +111,9 @@ func run(args []string) error {
 	proxies := fs.String("proxies", "", "file of egress proxies, one per line")
 	statePath := fs.String("state", "", "direct: where identities are persisted between arms")
 	out := fs.String("out", ".", "directory for the JSONL")
+	noRenewFlag := fs.Bool("no-renew", false, "experiment: make RenewIdentity a "+
+		"no-op, so a block is met with the ladder's wait and nothing else — "+
+		"this is what separates 'the pause healed it' from 'the new identity did'")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -170,6 +179,12 @@ func run(args []string) error {
 	}
 	defer leaser.Close()
 
+	if *noRenewFlag {
+		leaser = noRenew{leaser}
+		fmt.Println("EXPERIMENT: RenewIdentity is a no-op; a block is met with " +
+			"the wait alone, on the identity the site refused")
+	}
+
 	pacer := transport.NewPacer(transport.PacerConfig{
 		Floor:   *spacing,
 		Jitter:  transport.DefaultJitter,
@@ -195,6 +210,7 @@ func run(args []string) error {
 	started := time.Now()
 	var recs []record
 	var stopped string
+	consecutiveBad := 0
 
 	for i := 1; i <= *requests; i++ {
 		t0 := time.Now()
@@ -247,6 +263,24 @@ func run(args []string) error {
 		if ferr != nil && !r.good() {
 			stopped = fmt.Sprintf("gave up at request %d: %v", i, ferr)
 			break
+		}
+		// A run of refusals means the target has stopped answering this
+		// address, and the ladder exhausting its backoffs returns no error to
+		// say so — it just costs about fifteen minutes per fetch. Without this,
+		// the first four-jar arm spent two hours and forty minutes hammering an
+		// address that had already said no, which is precisely what this
+		// harness promised not to do.
+		if !r.good() {
+			consecutiveBad++
+			if consecutiveBad >= maxConsecutiveBad {
+				stopped = fmt.Sprintf(
+					"stopped at request %d after %d refusals in a row — the "+
+						"address is not answering and nothing here can fix that",
+					i, consecutiveBad)
+				break
+			}
+		} else {
+			consecutiveBad = 0
 		}
 	}
 
