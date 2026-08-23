@@ -186,3 +186,68 @@ func scanCards(body []byte, spec cardSpec) []cardFields {
 func collapse(s string) string {
 	return strings.Join(strings.Fields(s), " ")
 }
+
+// scanMarkers walks the document once and returns the subtree text of every
+// element carrying one of the wanted data-marker values.
+//
+// It exists for the item page, where the handles are at document level rather
+// than inside repeated cards. Calling textOfMarker once per field would
+// tokenise a 629 KB document once per field, and — worse — subtreeText's depth
+// counter runs to the end of the document on markup that leaves an element
+// unclosed, which is the failure that made the first desktop card reader hang.
+func scanMarkers(body []byte, want map[string]bool) map[string]string {
+	out := map[string]string{}
+
+	z := html.NewTokenizer(bytes.NewReader(body))
+	capturing := ""
+	var capTag []byte
+	capDepth := 0
+	var buf bytes.Buffer
+
+	for {
+		tt := z.Next()
+		if tt == html.ErrorToken {
+			return out
+		}
+		switch tt {
+		case html.TextToken:
+			if capturing != "" {
+				buf.Write(z.Text())
+			}
+		case html.StartTagToken, html.SelfClosingTagToken:
+			tag, hasAttr := z.TagName()
+			owned := append([]byte(nil), tag...)
+			void := tt == html.SelfClosingTagToken || voidElements[string(owned)]
+			marker := ""
+			if hasAttr {
+				if v, ok := attrOf(z, "data-marker"); ok {
+					marker = v
+				}
+			}
+			if capturing == "" {
+				if marker != "" && want[marker] && !void {
+					if _, taken := out[marker]; !taken {
+						capturing, capTag, capDepth = marker, owned, 1
+						buf.Reset()
+					}
+				}
+				continue
+			}
+			if !void && bytes.Equal(owned, capTag) {
+				capDepth++
+			}
+		case html.EndTagToken:
+			if capturing == "" {
+				continue
+			}
+			name, _ := z.TagName()
+			if bytes.Equal(name, capTag) {
+				capDepth--
+				if capDepth == 0 {
+					out[capturing] = collapse(buf.String())
+					capturing = ""
+				}
+			}
+		}
+	}
+}
