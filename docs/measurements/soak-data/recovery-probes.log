@@ -1,0 +1,5 @@
+
+=== recovery probes started 2026-08-23T18:32:59Z ===
+probe 1  18:48:01  mode=direct class=ok status=200 attempts=1
+probe 2  19:03:03  mode=direct class=ok status=200 attempts=1
+address recovered after 30 minutes of rest
