@@ -220,6 +220,12 @@ func (f *Fetcher) Fetch(ctx context.Context, target string) (Result, error) {
 		// like the one that was measured. That is a question about a body
 		// nobody kept, so keep it.
 		//
+		// ClassSoftBlock is here for the same reason and it was learned the
+		// same way. Its remedy is the one thing in the table still running on
+		// an assumption, and the first fetch that ever exhausted every attempt
+		// on it — six of them, twenty-seven minutes — left nothing behind to
+		// look at, because a 200 is neither a 3xx nor an unhandled status.
+		//
 		// A soak run turned up a 302 that no measurement describes. It reached
 		// the classifier at all only because Go returns a 3xx unfollowed when
 		// its Location is missing or unusable, and it was then classified by
@@ -227,8 +233,11 @@ func (f *Fetcher) Fetch(ctx context.Context, target string) (Result, error) {
 		// ClassSoftBlock through the ErrNoExtractor branch. There is no 3xx
 		// branch in the table. Rather than invent what a redirect means, keep
 		// what it said.
-		if status >= 300 && status < 400 || res.Verdict.Class == ClassOther ||
-			status == 429 || status == 403 {
+		switch {
+		case status >= 300 && status < 400,
+			status == 429, status == 403,
+			res.Verdict.Class == ClassOther,
+			res.Verdict.Class == ClassSoftBlock:
 			res.Body = body
 		}
 
