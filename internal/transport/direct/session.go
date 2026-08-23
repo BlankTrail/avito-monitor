@@ -67,6 +67,10 @@ func (s *session) rebuildClient() {
 	} else {
 		rt = newTransport(s.fp, s.roots)
 	}
+	// The decoder is not optional. This client sets Accept-Encoding itself,
+	// because Chrome's exact set is part of the fingerprint, and Go then stops
+	// decompressing gzip on its own and never handled br or zstd at all.
+	rt = decodingTransport{base: rt}
 	s.client = &http.Client{Transport: rt, Jar: s.jar, Timeout: 120 * time.Second}
 }
 
