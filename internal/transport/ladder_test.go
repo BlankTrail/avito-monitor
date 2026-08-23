@@ -146,9 +146,13 @@ func TestEmptyIsNotAFailure(t *testing.T) {
 	}
 }
 
-// TestThrottledRotatesAndNothingElseDoes. Rotation destroys a Qrator clearance
-// worth nineteen to twenty-three seconds, so exactly one class may reach it.
-func TestThrottledRotatesAndNothingElseDoes(t *testing.T) {
+// TestEachRefusalGetsItsOwnRemedyAndNoOther.
+//
+// Rotation destroys a Qrator clearance worth nineteen to twenty-three seconds,
+// so exactly one class may reach it. And a 403 must NOT renew on its first
+// refusal: measured, eighteen of eighteen cleared by waiting alone, and an arm
+// that renewed was no faster than one that could not.
+func TestEachRefusalGetsItsOwnRemedyAndNoOther(t *testing.T) {
 	cases := []struct {
 		name        string
 		replies     []reply
@@ -156,14 +160,18 @@ func TestThrottledRotatesAndNothingElseDoes(t *testing.T) {
 		wantRenews  int
 	}{
 		{"throttled", []reply{{429, "<html>Телефоны</html>"}, {200, okBody}}, 1, 0},
-		{"burned", []reply{{403, "<html>Телефоны</html>"}, {200, okBody}}, 0, 1},
+		// The measured remedy for a 403 is time. Renewing would throw away a
+		// clearance to fix something the identity was not causing.
+		{"burned", []reply{{403, "<html>Телефоны</html>"}, {200, okBody}}, 0, 0},
+		// Not measured, so unchanged.
 		{"soft block", []reply{{200, "<html><div>Авито</div></html>"}, {200, okBody}}, 0, 1},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			now := time.Date(2026, 8, 23, 12, 0, 0, 0, time.UTC)
 			l := &recordingLease{warm: true, replies: c.replies}
-			f, _ := newTestFetcher(t, l, Caps{SolvesChallenges: true, RotatesEgress: true}, &now)
+			f, _ := newTestFetcher(t, l,
+				Caps{SolvesChallenges: true, RotatesEgress: true, Addresses: 2}, &now)
 			if _, err := f.Fetch(context.Background(), "https://m.avito.ru/all?q=x"); err != nil {
 				t.Fatalf("Fetch: %v", err)
 			}
@@ -300,49 +308,94 @@ func TestColdWarmsRatherThanHalting(t *testing.T) {
 	}
 }
 
-// TestBackoffsAreOursAndEscalate. There is never a Retry-After on this target,
-// so the waits come from the measurements rather than from a header.
-func TestBackoffsAreOursAndEscalate(t *testing.T) {
+// TestAThrottleRotatesRatherThanWaits.
+//
+// The backoff ladder that used to live here climbed 25 s, 60 s, 200 s on a 429,
+// on the theory that a 429 is a rate limit that expires. A soak run put
+// sixty-six consecutive 429s through it — eleven fetches, about fifteen minutes
+// of waiting each — and cleared none. The only two that ever recovered did so
+// through a 302, which is how a challenge flow ends rather than how a rate
+// limit expires.
+//
+// So a 429 costs one rotation and no waiting at all.
+func TestAThrottleRotatesRatherThanWaits(t *testing.T) {
 	now := time.Date(2026, 8, 23, 12, 0, 0, 0, time.UTC)
 	l := &recordingLease{warm: true, replies: []reply{
-		{429, "<html>Телефоны</html>"}, {429, "<html>Телефоны</html>"},
 		{429, "<html>Телефоны</html>"}, {200, okBody},
 	}}
-	f, slept := newTestFetcher(t, l, Caps{SolvesChallenges: true, RotatesEgress: true}, &now)
-	if _, err := f.Fetch(context.Background(), "https://m.avito.ru/all?q=x"); err != nil {
-		t.Fatalf("Fetch: %v", err)
-	}
-	want := []time.Duration{25 * time.Second, 60 * time.Second, 200 * time.Second}
-	if len(*slept) != len(want) {
-		t.Fatalf("slept %v, want %v", *slept, want)
-	}
-	for i, d := range *slept {
-		if d != want[i] {
-			t.Errorf("backoff %d = %v, want %v", i, d, want[i])
-		}
-	}
-}
+	f, slept := newTestFetcher(t, l,
+		Caps{SolvesChallenges: true, RotatesEgress: true, Addresses: 3}, &now)
 
-// TestRotationIsSkippedWhenThereIsNowhereToGo. On a single-address install a
-// throttle is waited out rather than reported as a failure to fetch.
-func TestRotationIsSkippedWhenThereIsNowhereToGo(t *testing.T) {
-	now := time.Date(2026, 8, 23, 12, 0, 0, 0, time.UTC)
-	l := &recordingLease{warm: true, replies: []reply{
-		{429, "<html>Телефоны</html>"}, {200, okBody},
-	}}
-	f, slept := newTestFetcher(t, l, Caps{SolvesChallenges: false, RotatesEgress: false}, &now)
 	res, err := f.Fetch(context.Background(), "https://m.avito.ru/all?q=x")
 	if err != nil {
 		t.Fatalf("Fetch: %v", err)
 	}
+	if res.Verdict.Class != ClassOK {
+		t.Errorf("class = %q, want ok from the new address", res.Verdict.Class)
+	}
+	if l.rotated != 1 {
+		t.Errorf("rotated %d times, want exactly 1", l.rotated)
+	}
+	if len(*slept) != 0 {
+		t.Errorf("slept %v on a 429; waiting is measured not to help, and the "+
+			"new address has no history to wait out", *slept)
+	}
+}
+
+// TestAThrottleWithNowhereToGoHalts.
+//
+// This is the boundary of running without a solver, and it must be reached
+// rather than ground away at. Before this was measured the ladder waited a 429
+// out on a single-address install, which cost about fifteen minutes per fetch
+// and never once worked.
+func TestAThrottleWithNowhereToGoHalts(t *testing.T) {
+	now := time.Date(2026, 8, 23, 12, 0, 0, 0, time.UTC)
+	l := &recordingLease{warm: true, replies: []reply{
+		{429, "<html>Телефоны</html>"}, {200, okBody},
+	}}
+	f, slept := newTestFetcher(t, l,
+		Caps{SolvesChallenges: false, RotatesEgress: false}, &now)
+
+	_, err := f.Fetch(context.Background(), "https://m.avito.ru/all?q=x")
+	var halt *HaltError
+	if !errors.As(err, &halt) {
+		t.Fatalf("err = %v, want a *HaltError: there is no address to move to "+
+			"and waiting is measured not to clear a 429", err)
+	}
 	if l.rotated != 0 {
 		t.Errorf("rotated %d times with nowhere to move to", l.rotated)
 	}
-	if len(*slept) != 1 {
-		t.Errorf("slept %v, want one backoff", *slept)
+	if len(*slept) != 0 {
+		t.Errorf("slept %v before halting; the wait cannot help", *slept)
 	}
-	if res.Verdict.Class != ClassOK {
-		t.Errorf("class = %q, want ok after the wait", res.Verdict.Class)
+	if l.n != 1 {
+		t.Errorf("made %d requests, want 1 — a halt spends no more budget", l.n)
+	}
+	// The message must name the remedy the operator actually has.
+	b := halt.Boundary()
+	for _, want := range []string{"429", "-proxies", "BlankTrail"} {
+		if !strings.Contains(b, want) {
+			t.Errorf("the boundary message does not mention %q:\n%s", want, b)
+		}
+	}
+}
+
+// TestEveryAddressGetsOneTurnAndThenItHalts. Cycling a pool that has already
+// refused only spends the pool.
+func TestEveryAddressGetsOneTurnAndThenItHalts(t *testing.T) {
+	now := time.Date(2026, 8, 23, 12, 0, 0, 0, time.UTC)
+	l := &recordingLease{warm: true, replies: []reply{{429, "<html>Телефоны</html>"}}}
+	f, _ := newTestFetcher(t, l,
+		Caps{SolvesChallenges: false, RotatesEgress: true, Addresses: 2}, &now)
+
+	_, err := f.Fetch(context.Background(), "https://m.avito.ru/all?q=x")
+	var halt *HaltError
+	if !errors.As(err, &halt) {
+		t.Fatalf("err = %v, want a *HaltError once every address has refused", err)
+	}
+	if l.rotated != 2 {
+		t.Errorf("rotated %d times with 2 addresses, want 2 — one turn each",
+			l.rotated)
 	}
 }
 
@@ -401,5 +454,69 @@ func TestTraceOfAnUntroubledFetchIsOneStep(t *testing.T) {
 	if len(res.Trace) != 1 || res.Trace[0].Class != ClassOK ||
 		res.Trace[0].Remedy != RemedyNone {
 		t.Errorf("Trace = %+v, want exactly one ok step needing no remedy", res.Trace)
+	}
+}
+
+// TestA403WaitsBeforeItEverRenews is the measured remedy, asserted directly.
+//
+// The first soak arm was read as "the renewal fixed it" when the ladder had
+// renewed AND waited and the arm could not tell them apart. An arm with
+// RenewIdentity replaced by a no-op then recovered from four consecutive 403s
+// on one unchanged srv_id, twice. Waiting is the remedy; the renewal is a
+// fallback for the case the measurement does not cover.
+func TestA403WaitsBeforeItEverRenews(t *testing.T) {
+	now := time.Date(2026, 8, 23, 12, 0, 0, 0, time.UTC)
+	// Three 403s, then a clean page — within what the measurement observed.
+	l := &recordingLease{warm: true, replies: []reply{
+		{403, "<html>Телефоны</html>"}, {403, "<html>Телефоны</html>"},
+		{403, "<html>Телефоны</html>"}, {200, okBody},
+	}}
+	f, slept := newTestFetcher(t, l,
+		Caps{SolvesChallenges: false, RotatesEgress: true, Addresses: 2}, &now)
+
+	res, err := f.Fetch(context.Background(), "https://m.avito.ru/all?q=x")
+	if err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+	if res.Verdict.Class != ClassOK {
+		t.Errorf("class = %q, want ok — waiting is measured to clear a 403",
+			res.Verdict.Class)
+	}
+	if l.renewed != 0 {
+		t.Errorf("renewed %d times inside the measured range; waiting clears a "+
+			"403 and renewing discards a clearance that cost 19-23 s", l.renewed)
+	}
+	if l.rotated != 0 {
+		t.Errorf("rotated %d times on a 403; the address was answering, and "+
+			"rotation is the 429 remedy", l.rotated)
+	}
+	if len(*slept) != 3 {
+		t.Fatalf("slept %v, want three waits — one per refusal", *slept)
+	}
+	for i, d := range *slept {
+		if d != blockWait {
+			t.Errorf("wait %d = %v, want %v", i, d, blockWait)
+		}
+	}
+}
+
+// TestA403RenewsOnlyOnceWaitingHasFailed. Eighteen observations say waiting
+// works; they do not say an identity can never be burnt. Past the ground the
+// measurement covers, the other remedy is worth a turn.
+func TestA403RenewsOnlyOnceWaitingHasFailed(t *testing.T) {
+	now := time.Date(2026, 8, 23, 12, 0, 0, 0, time.UTC)
+	l := &recordingLease{warm: true, replies: []reply{{403, "<html>Телефоны</html>"}}}
+	f, _ := newTestFetcher(t, l, Caps{SolvesChallenges: false}, &now)
+
+	if _, err := f.Fetch(context.Background(), "https://m.avito.ru/all?q=x"); err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+	if l.renewed == 0 {
+		t.Error("never renewed across six refusals; the fallback exists for " +
+			"exactly the case where waiting has stopped working")
+	}
+	if l.renewed > maxAttempts-burnWaitsBeforeRenewing {
+		t.Errorf("renewed %d times; the fallback must not become the habit",
+			l.renewed)
 	}
 }

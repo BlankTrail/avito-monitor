@@ -122,10 +122,35 @@ func TestRemedies(t *testing.T) {
 		t.Errorf("ClassEmpty.Remedy() = %v; it is the site's answer, not a fault",
 			ClassEmpty.Remedy())
 	}
-	for _, c := range []Class{ClassBurned, ClassSoftBlock} {
-		if c.Remedy() != RemedyRenewIdentity {
-			t.Errorf("%q.Remedy() = %v, want RemedyRenewIdentity", c, c.Remedy())
+	// Measured: a 403 heals with time. An arm whose RenewIdentity was a no-op
+	// recovered from four consecutive 403s on one unchanged srv_id, and an arm
+	// that did renew was no faster — recovery tracked the waits and nothing
+	// else. Eighteen of eighteen cleared by waiting; none failed to. Renewing
+	// discards a clearance worth 19-23 s to fix what the identity did not cause.
+	if ClassBurned.Remedy() != RemedyWait {
+		t.Errorf("ClassBurned.Remedy() = %v, want RemedyWait", ClassBurned.Remedy())
+	}
+	// NOT measured. A 200 with no container is a different signal from a 403
+	// and keeps its remedy until an arm separates them the way direct-norenew
+	// separated the 403.
+	if ClassSoftBlock.Remedy() != RemedyRenewIdentity {
+		t.Errorf("ClassSoftBlock.Remedy() = %v, want RemedyRenewIdentity",
+			ClassSoftBlock.Remedy())
+	}
+	// Rotation stays reachable from exactly one class. The 429 is what a
+	// different address fixes; nothing else is.
+	for _, c := range []Class{
+		ClassOK, ClassEmpty, ClassShape, ClassBurned, ClassSoftBlock,
+		ClassCold, ClassChallenge, ClassMangled, ClassOther,
+	} {
+		if c.Remedy() == RemedyRotateEgress {
+			t.Errorf("%q.Remedy() = RemedyRotateEgress; only a 429 is fixed by "+
+				"a different address", c)
 		}
+	}
+	if ClassThrottled.Remedy() != RemedyRotateEgress {
+		t.Errorf("ClassThrottled.Remedy() = %v, want RemedyRotateEgress",
+			ClassThrottled.Remedy())
 	}
 }
 

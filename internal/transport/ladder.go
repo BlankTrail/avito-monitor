@@ -12,12 +12,15 @@ import (
 	"github.com/BlankTrail/avito-monitor/avito"
 )
 
-// backoffs are ours, seeded from the measurements: about 23 s for a first
-// offence and about 200 s after ninety requests in ten minutes.
+// There is no backoff ladder any more, and its absence is the finding.
 //
-// Nothing here reads Retry-After. This target never sends one, so a ladder that
-// waited for it would wait for a header that never comes.
-var backoffs = []time.Duration{25 * time.Second, 60 * time.Second, 200 * time.Second}
+// It used to climb 25 s, 60 s, 200 s on a 429, on the theory that a 429 is a
+// rate limit that expires. A soak run put sixty-six consecutive 429s through
+// that ladder — eleven fetches, about fifteen minutes each — and cleared none
+// of them. Meanwhile eighteen of eighteen 403s cleared by waiting alone. The
+// two are opposites, and the ladder was applied to the one it could not help.
+//
+// A 429 now costs one rotation or one halt. Waiting is what a 403 gets.
 
 // challengeRepeats and challengeGap are what a solver-capable transport spends
 // on a challenge: three attempts on the SAME identity, about twenty-five
@@ -29,6 +32,17 @@ const (
 
 // maxAttempts bounds one Fetch however the remedies fall out.
 const maxAttempts = 6
+
+// blockWait is what a 403 costs. Measured: recovery tracks the number of these
+// and nothing else, so it is the whole remedy rather than an accompaniment to
+// one.
+const blockWait = 240 * time.Second
+
+// burnWaitsBeforeRenewing is how many waits the measured remedy gets before the
+// unmeasured one is tried. Three, because eighteen of eighteen observed 403s
+// cleared within four waits, so a fetch still refused after three has left the
+// ground the measurement covers.
+const burnWaitsBeforeRenewing = 3
 
 // HaltError says this transport cannot continue against this target, and that
 // no amount of retrying will change it.
@@ -52,6 +66,17 @@ func (e *HaltError) Error() string {
 // rather than advertises: the reader has just hit something and wants to know
 // what, not to be sold to.
 func (e *HaltError) Boundary() string {
+	if e.Verdict.Class == ClassThrottled {
+		return "The site answered with 429 and will not stop while this exit " +
+			"address is the one asking. Measured: sixty-six consecutive 429s " +
+			"across about fifteen minutes of waiting each cleared none, and " +
+			"the only ones that cleared did so through a redirect, which is " +
+			"how a challenge ends rather than how a rate limit expires. The " +
+			"remedy is a different address, and none is configured — pass " +
+			"-proxies with a list, one entry per session, or let BlankTrail " +
+			"answer the challenge instead. Collection on this watch has " +
+			"stopped rather than retrying, because retrying cannot succeed."
+	}
 	return "This request met an interactive challenge, which a plain HTTP client " +
 		"cannot pass: the site verifies it with a proof of work only a browser " +
 		"can compute. Collection on this watch has stopped rather than " +
@@ -140,8 +165,9 @@ func (f *Fetcher) Fetch(ctx context.Context, target string) (Result, error) {
 	defer lease.Release()
 
 	var res Result
-	rung := 0
 	challenges := 0
+	rotations := 0
+	burns := 0
 
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		if err := f.pacer.Wait(ctx, lease.Session(), lease.Label()); err != nil {
@@ -188,10 +214,11 @@ func (f *Fetcher) Fetch(ctx context.Context, target string) (Result, error) {
 		// classifier calls it "throttled" and answers it with a backoff that
 		// cannot work.
 		//
-		// Neither branch is changed here. The captcha markers did not fire on
-		// those bodies, so either the marker set is short or a 429 challenge
-		// page does not look like the one that was measured. That is a question
-		// about a body nobody kept.
+		// The 429 branch now acts on that: rotate, or halt. What is still
+		// unknown is why the captcha markers did not fire on those bodies —
+		// either the marker set is short or a 429 challenge page does not look
+		// like the one that was measured. That is a question about a body
+		// nobody kept, so keep it.
 		//
 		// A soak run turned up a 302 that no measurement describes. It reached
 		// the classifier at all only because Go returns a 3xx unfollowed when
@@ -207,10 +234,6 @@ func (f *Fetcher) Fetch(ctx context.Context, target string) (Result, error) {
 
 		switch res.Verdict.Class {
 		case ClassOK, ClassEmpty:
-			// The ladder resets on the first good answer, so a throttle an hour
-			// later starts at twenty-five seconds again rather than at two
-			// hundred.
-			rung = 0
 			return res, nil
 
 		case ClassShape:
@@ -247,22 +270,87 @@ func (f *Fetcher) Fetch(ctx context.Context, target string) (Result, error) {
 			}
 
 		case ClassThrottled:
-			if err := f.rotate(ctx, lease); err != nil {
-				return res, err
+			// Waiting does not clear a 429. Measured: sixty-six consecutive
+			// 429s, eleven fetches, about fifteen minutes of escalating
+			// backoff apiece, and not one turned into a 200 — while the only
+			// two that recovered did so through a 302, which is how a
+			// challenge flow ends rather than how a rate limit expires.
+			//
+			// So the remedy is a different address, and there is no
+			// second-best. With nowhere to move, this transport is finished on
+			// this target and says so, instead of spending a quarter of an
+			// hour per fetch on a backoff that cannot work. That halt is the
+			// honest boundary of running without a solver.
+			if !f.leaser.Caps().RotatesEgress {
+				return res, &HaltError{
+					Verdict: res.Verdict, URL: target,
+					Status: status, At: f.cfg.Now(),
+				}
 			}
-			if err := f.cfg.Sleep(ctx, backoffs[min(rung, len(backoffs)-1)]); err != nil {
-				return res, err
+			// Each configured address gets one turn. A Caps that reports
+			// rotation but no address count still gets one, because refusing
+			// to try is worse than trying once.
+			limit := f.leaser.Caps().Addresses
+			if limit < 1 {
+				limit = 1
 			}
-			rung++
+			rotations++
+			if rotations > limit {
+				// Every configured address has now been asked and refused.
+				// Cycling them again would only spend the pool.
+				return res, &HaltError{
+					Verdict: res.Verdict, URL: target,
+					Status: status, At: f.cfg.Now(),
+				}
+			}
+			if err := lease.RotateEgress(ctx); err != nil {
+				return res, &HaltError{
+					Verdict: res.Verdict, URL: target,
+					Status: status, At: f.cfg.Now(),
+				}
+			}
+			// No backoff ladder here. The new address has no history with this
+			// target, and the pacer's per-address window is empty for it, so
+			// sleeping would only delay a request that is already allowed.
 
-		case ClassBurned, ClassSoftBlock:
-			// Bound to the identity rather than to the address. Never rotate:
-			// that would destroy a clearance worth nineteen to twenty-three
-			// seconds to fix something rotation cannot fix.
+		case ClassSoftBlock:
+			// Unmeasured, and therefore unchanged: a 200 with no container is a
+			// different signal from a 403, and nothing here has separated them
+			// the way direct-norenew separated the 403.
 			if err := lease.RenewIdentity(ctx); err != nil {
 				return res, err
 			}
-			if err := f.cfg.Sleep(ctx, 240*time.Second); err != nil {
+			if err := f.cfg.Sleep(ctx, blockWait); err != nil {
+				return res, err
+			}
+
+		case ClassBurned:
+			// A 403 heals with time, and the identity is not what was refused.
+			//
+			// Measured, three ways. An arm with renewal replaced by a no-op
+			// recovered from four consecutive 403s on one unchanged srv_id, and
+			// again two fetches later. An arm with renewal enabled was no
+			// faster: recovery tracked the number of 240-second waits and
+			// nothing else. Across every arm, eighteen of eighteen 403s cleared
+			// by waiting and none failed to.
+			//
+			// So wait first. Renewing discards a Qrator clearance that cost
+			// nineteen to twenty-three seconds to obtain, to fix something the
+			// identity was not causing — which is the same mistake this table
+			// forbids in the other direction.
+			//
+			// The renewal is kept as a fallback rather than deleted. Eighteen
+			// observations say waiting works; they do not say an identity can
+			// never be burnt. Once the measured remedy has failed three times
+			// on this fetch, the measured remedy is disconfirmed for this
+			// instance and the other one is worth a turn.
+			burns++
+			if burns > burnWaitsBeforeRenewing {
+				if err := lease.RenewIdentity(ctx); err != nil {
+					return res, err
+				}
+			}
+			if err := f.cfg.Sleep(ctx, blockWait); err != nil {
 				return res, err
 			}
 

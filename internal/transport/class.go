@@ -34,6 +34,7 @@ const (
 	RemedyRenewIdentity Remedy = "renew-identity" // new identity, same address
 	RemedyWarmUp        Remedy = "warm-up"        // a root navigation, then one retry
 	RemedyRedial        Remedy = "redial"
+	RemedyWait          Remedy = "wait" // same identity, same address, just time
 )
 
 // Remedy is the single table the ladder reads.
@@ -51,7 +52,19 @@ func (c Class) Remedy() Remedy {
 		// Repeating a request whose payload we have stopped understanding
 		// spends the budget on our own bug. Archive the body instead.
 		return RemedyNone
-	case ClassSoftBlock, ClassBurned:
+	case ClassBurned:
+		// Measured: a 403 heals with time and the identity is not what was
+		// refused. An arm whose RenewIdentity was a no-op recovered from four
+		// consecutive 403s on one unchanged srv_id; an arm that did renew was
+		// no faster. Eighteen of eighteen cleared by waiting, none failed to.
+		//
+		// Renewing would discard a Qrator clearance worth nineteen to
+		// twenty-three seconds to fix something the identity was not causing.
+		return RemedyWait
+	case ClassSoftBlock:
+		// NOT measured. A 200 with no container is a different signal from a
+		// 403 and keeps the remedy it was given until someone runs the arm that
+		// separates them, the way direct-norenew separated the 403.
 		return RemedyRenewIdentity
 	case ClassCold:
 		return RemedyWarmUp
