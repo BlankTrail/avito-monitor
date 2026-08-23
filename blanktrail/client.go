@@ -126,9 +126,19 @@ type PortSpec struct {
 	SpoofHeaders   bool // spoof request header order
 	SpoofUserAgent bool // let the proxy own a consistent UA and sec-ch-ua
 	JSSolver       bool // Challenge Breaker: solve JS challenges upstream
-	KeepSessions   bool // give the port its own per-domain cookie jar
-	Decompress     bool // hand the client an identity-encoded body
-	EnableHTTP3    bool // re-originate over HTTP/3 where the target offers it
+
+	// CaptchaAction and CaptchaMaxAttempts are the proxy's own policy for a
+	// port that meets an interactive challenge. A live port reports both and
+	// the control API accepts both on open, but this SDK could set neither —
+	// so a caller inherited whatever default the instance happened to hold,
+	// which is a policy decision made where the caller cannot see it. Left
+	// unset they are omitted and nothing changes for a caller that does not
+	// care.
+	CaptchaAction      string
+	CaptchaMaxAttempts int
+	KeepSessions       bool // give the port its own per-domain cookie jar
+	Decompress         bool // hand the client an identity-encoded body
+	EnableHTTP3        bool // re-originate over HTTP/3 where the target offers it
 
 	// TimeoutSeconds is how long the port itself waits for one request before
 	// giving up. Zero leaves the port's own default in place.
@@ -211,25 +221,27 @@ type PortInfo struct {
 // Note: auto_rotate is deliberately absent. It was removed from the control API
 // — a profile is applied on open by itself.
 type openPortRequest struct {
-	Port            int     `json:"port"`
-	Protocol        string  `json:"protocol"`
-	Mode            string  `json:"mode,omitempty"`
-	Browser         string  `json:"browser,omitempty"`
-	OS              string  `json:"os,omitempty"`
-	Upstream        *string `json:"upstream,omitempty"`
-	UpstreamGateway string  `json:"upstream_gateway,omitempty"`
-	H2Spoofing      *bool   `json:"h2_spoofing,omitempty"`
-	SpoofHeaders    *bool   `json:"spoof_headers,omitempty"`
-	SpoofUserAgent  *bool   `json:"spoof_user_agent,omitempty"`
-	JSSolver        *bool   `json:"js_solver,omitempty"`
-	KeepSessions    *bool   `json:"keep_sessions,omitempty"`
-	Decompress      *bool   `json:"decompress,omitempty"`
-	EnableHTTP3     *bool   `json:"enable_http3,omitempty"`
-	MaxConcurrent   *int    `json:"max_concurrent,omitempty"`
-	RetryDelayMs    *int    `json:"retry_delay_ms,omitempty"`
-	IdleSeconds     *int    `json:"idle_seconds,omitempty"`
-	TimeoutSeconds  *int    `json:"timeout_seconds,omitempty"`
-	LeakGuard       string  `json:"leak_guard,omitempty"`
+	Port               int     `json:"port"`
+	Protocol           string  `json:"protocol"`
+	Mode               string  `json:"mode,omitempty"`
+	Browser            string  `json:"browser,omitempty"`
+	OS                 string  `json:"os,omitempty"`
+	Upstream           *string `json:"upstream,omitempty"`
+	UpstreamGateway    string  `json:"upstream_gateway,omitempty"`
+	H2Spoofing         *bool   `json:"h2_spoofing,omitempty"`
+	SpoofHeaders       *bool   `json:"spoof_headers,omitempty"`
+	SpoofUserAgent     *bool   `json:"spoof_user_agent,omitempty"`
+	JSSolver           *bool   `json:"js_solver,omitempty"`
+	CaptchaAction      string  `json:"captcha_action,omitempty"`
+	CaptchaMaxAttempts int     `json:"captcha_max_attempts,omitempty"`
+	KeepSessions       *bool   `json:"keep_sessions,omitempty"`
+	Decompress         *bool   `json:"decompress,omitempty"`
+	EnableHTTP3        *bool   `json:"enable_http3,omitempty"`
+	MaxConcurrent      *int    `json:"max_concurrent,omitempty"`
+	RetryDelayMs       *int    `json:"retry_delay_ms,omitempty"`
+	IdleSeconds        *int    `json:"idle_seconds,omitempty"`
+	TimeoutSeconds     *int    `json:"timeout_seconds,omitempty"`
+	LeakGuard          string  `json:"leak_guard,omitempty"`
 }
 
 // protocolOr defaults an unset protocol to the HTTP CONNECT forward proxy, which
@@ -245,19 +257,21 @@ func (s PortSpec) request(port int, eg Egress) openPortRequest {
 	h2, hdr, ua := s.H2Spoofing, s.SpoofHeaders, s.SpoofUserAgent
 	js, jar, dec, h3 := s.JSSolver, s.KeepSessions, s.Decompress, s.EnableHTTP3
 	req := openPortRequest{
-		Port:           port,
-		Protocol:       protocolOr(s.Protocol),
-		Mode:           s.Mode,
-		Browser:        s.Browser,
-		OS:             s.OS,
-		H2Spoofing:     &h2,
-		SpoofHeaders:   &hdr,
-		SpoofUserAgent: &ua,
-		JSSolver:       &js,
-		KeepSessions:   &jar,
-		Decompress:     &dec,
-		EnableHTTP3:    &h3,
-		LeakGuard:      s.LeakGuard,
+		Port:               port,
+		Protocol:           protocolOr(s.Protocol),
+		Mode:               s.Mode,
+		Browser:            s.Browser,
+		OS:                 s.OS,
+		H2Spoofing:         &h2,
+		SpoofHeaders:       &hdr,
+		SpoofUserAgent:     &ua,
+		JSSolver:           &js,
+		CaptchaAction:      s.CaptchaAction,
+		CaptchaMaxAttempts: s.CaptchaMaxAttempts,
+		KeepSessions:       &jar,
+		Decompress:         &dec,
+		EnableHTTP3:        &h3,
+		LeakGuard:          s.LeakGuard,
 	}
 	if s.MaxConcurrent > 0 {
 		n := s.MaxConcurrent
