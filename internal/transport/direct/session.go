@@ -65,7 +65,7 @@ func (s *session) rebuildClient() {
 	if s.plain {
 		rt = newPlainTransport()
 	} else {
-		rt = newTransport(s.fp, s.roots)
+		rt = newTransport(s.fp, s.roots, s.egress)
 	}
 	// The decoder is not optional. This client sets Accept-Encoding itself,
 	// because Chrome's exact set is part of the fingerprint, and Go then stops

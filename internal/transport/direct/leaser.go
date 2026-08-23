@@ -276,10 +276,17 @@ func (x *sessionLease) RotateEgress(ctx context.Context) error {
 	for i, u := range ups {
 		if u == x.s.egress {
 			x.s.egress = ups[(i+1)%len(ups)]
+			x.s.rebuildClient()
 			return nil
 		}
 	}
 	x.s.egress = ups[0]
+	// The client must be rebuilt, not merely the field reassigned. The egress
+	// is captured in the transport's dial closure, and a pooled connection
+	// still runs over the OLD address — so a rotation without this line changes
+	// a log label and nothing else, which is the failure mode the ladder can
+	// least afford to be lied to about.
+	x.s.rebuildClient()
 	return nil
 }
 

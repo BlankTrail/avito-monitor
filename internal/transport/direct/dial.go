@@ -32,12 +32,15 @@ const dialTimeout = 15 * time.Second
 //
 // ALPN offers h2 and http/1.1 in that order, because Chrome does; the result is
 // then required to be h2 for the reason ErrNotH2 gives.
-func dialTLS(ctx context.Context, fp Fingerprint, network, addr string, roots *x509.CertPool) (net.Conn, error) {
+func dialTLS(ctx context.Context, fp Fingerprint, network, addr string, roots *x509.CertPool, egress string) (net.Conn, error) {
 	host, _, err := net.SplitHostPort(addr)
 	if err != nil {
 		host = addr
 	}
-	raw, err := (&net.Dialer{Timeout: dialTimeout}).DialContext(ctx, network, addr)
+	// The TCP connection may leave through an upstream, but the handshake above
+	// it is always ours: the proxy carries bytes and never terminates the TLS,
+	// so the fingerprint on the wire is the one this package built.
+	raw, err := dialThrough(ctx, egress, network, addr)
 	if err != nil {
 		return nil, err
 	}
@@ -69,10 +72,10 @@ func dialTLS(ctx context.Context, fp Fingerprint, network, addr string, roots *x
 //
 // A transport is never shared between identities: a pooled connection carries
 // the previous identity's TLS session, which would undo a renewal quietly.
-func newTransport(fp Fingerprint, roots *x509.CertPool) *http2.Transport {
+func newTransport(fp Fingerprint, roots *x509.CertPool, egress string) *http2.Transport {
 	return &http2.Transport{
 		DialTLSContext: func(ctx context.Context, network, addr string, _ *tls.Config) (net.Conn, error) {
-			return dialTLS(ctx, fp, network, addr, roots)
+			return dialTLS(ctx, fp, network, addr, roots, egress)
 		},
 		ReadIdleTimeout: 30 * time.Second,
 	}

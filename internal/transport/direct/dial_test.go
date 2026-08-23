@@ -81,7 +81,7 @@ func TestChromeAndroidIsTheMobileSurface(t *testing.T) {
 // dialler refuses anything else rather than degrading quietly.
 func TestDialTLSNegotiatesH2(t *testing.T) {
 	addr, roots := tlsEcho(t, []string{"h2", "http/1.1"})
-	conn, err := dialTLS(context.Background(), ChromeWindows(), "tcp", addr, roots)
+	conn, err := dialTLS(context.Background(), ChromeWindows(), "tcp", addr, roots, "")
 	if err != nil {
 		t.Fatalf("dialTLS: %v", err)
 	}
@@ -100,7 +100,7 @@ func TestDialTLSNegotiatesH2(t *testing.T) {
 // worth failing on: HTTP/1.1 under a Chrome handshake is its own fingerprint.
 func TestDialTLSRefusesADowngrade(t *testing.T) {
 	addr, roots := tlsEcho(t, []string{"http/1.1"})
-	_, err := dialTLS(context.Background(), ChromeWindows(), "tcp", addr, roots)
+	_, err := dialTLS(context.Background(), ChromeWindows(), "tcp", addr, roots, "")
 	if err == nil {
 		t.Fatal("a downgrade to HTTP/1.1 was accepted silently")
 	}
@@ -114,7 +114,7 @@ func TestDialTLSRefusesADowngrade(t *testing.T) {
 // perfect headers is exactly what this package exists not to be.
 func TestTheHandshakeIsNotGos(t *testing.T) {
 	addr, roots := tlsEcho(t, []string{"h2"})
-	conn, err := dialTLS(context.Background(), ChromeWindows(), "tcp", addr, roots)
+	conn, err := dialTLS(context.Background(), ChromeWindows(), "tcp", addr, roots, "")
 	if err != nil {
 		t.Fatal(err)
 	}

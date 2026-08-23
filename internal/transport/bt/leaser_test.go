@@ -162,3 +162,27 @@ func TestAddressesDoNotMultiplyWithoutChannels(t *testing.T) {
 		t.Error("RotatesEgress = true with nowhere to rotate to")
 	}
 }
+
+// TestAddressesNeverExceedsTheProxyPool. Ten ports over three proxies is three
+// addresses. Counting ports would licence three times the request rate those
+// addresses can carry, which is the budget lying in the direction that gets an
+// installation banned.
+func TestAddressesNeverExceedsTheProxyPool(t *testing.T) {
+	cases := []struct {
+		ports, pool int
+		rotates     bool
+		want        int
+	}{
+		{ports: 10, pool: 3, rotates: true, want: 3},
+		{ports: 2, pool: 8, rotates: true, want: 2},
+		{ports: 4, pool: 4, rotates: true, want: 4},
+		{ports: 4, pool: 0, rotates: true, want: 4}, // pool unknown: trust ports
+		{ports: 10, pool: 3, rotates: false, want: 1},
+	}
+	for _, c := range cases {
+		if got := addresses(c.ports, c.pool, c.rotates); got != c.want {
+			t.Errorf("addresses(ports=%d, pool=%d, rotates=%v) = %d; want %d",
+				c.ports, c.pool, c.rotates, got, c.want)
+		}
+	}
+}

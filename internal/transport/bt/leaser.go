@@ -47,7 +47,12 @@ type Config struct {
 	Ports    int
 	Surface  avito.Surface
 	Channels []blanktrail.Channel
-	CA       *x509.CertPool
+	// Addresses is how many distinct egress addresses the channels can produce.
+	// It bounds the budget: a pool of ten ports over three proxies is three
+	// addresses, not ten, and a budget that multiplied by ten would licence
+	// three times the request rate the addresses can carry.
+	Addresses int
+	CA        *x509.CertPool
 	// Insecure skips CA verification. Tests only: the proxy re-signs origins
 	// with its own MITM CA, and production pins it through Preflight.
 	Insecure bool
@@ -109,18 +114,25 @@ func Open(ctx context.Context, cfg Config) (*Leaser, error) {
 		caps: transport.Caps{
 			SolvesChallenges: true,
 			RotatesEgress:    rotates,
-			Addresses:        addresses(cfg.Ports, rotates),
+			Addresses:        addresses(cfg.Ports, cfg.Addresses, rotates),
 		},
 		prof: transport.Profile{OwnedByProxy: true, Surface: cfg.Surface},
 	}, nil
 }
 
-// addresses is how many distinct egresses the budget may multiply by. With no
-// channels configured every port shares the host's own address, and saying so
-// is what stops a larger pool from looking like a larger budget.
-func addresses(ports int, rotates bool) int {
+// addresses is how many distinct egresses the budget may multiply by.
+//
+// Two ways to get it wrong, and both inflate the figure a person is shown. With
+// no channels configured every port shares the host's own address, so a larger
+// pool is not a larger budget. And with a proxy list SHORTER than the pool,
+// ports double up on addresses — ten ports over three proxies is three, and the
+// smaller of the two is the honest answer.
+func addresses(ports, pool int, rotates bool) int {
 	if !rotates {
 		return 1
+	}
+	if pool > 0 && pool < ports {
+		return pool
 	}
 	return ports
 }

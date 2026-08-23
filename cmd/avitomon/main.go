@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/BlankTrail/avito-monitor/avito"
+	"github.com/BlankTrail/avito-monitor/blanktrail"
 	"github.com/BlankTrail/avito-monitor/internal/transport"
 	"github.com/BlankTrail/avito-monitor/internal/transport/bt"
 	"github.com/BlankTrail/avito-monitor/internal/transport/direct"
@@ -56,6 +57,8 @@ func fetchCmd(args []string) error {
 	key := fs.String("key", "", "BlankTrail API key (or "+keyEnv+")")
 	ports := fs.Int("ports", 2, "BlankTrail: ports to open")
 	sessions := fs.Int("sessions", 1, "direct: identities to hold")
+	proxies := fs.String("proxies", "", "file of egress proxies, one per line "+
+		"(scheme://[user:pass@]host:port; socks5 assumed)")
 	statePath := fs.String("state", "", "direct: where identities are persisted")
 	root := fs.String("root", "", "direct: the URL a warm-up navigates to (default: the target's origin)")
 	timeout := fs.Duration("timeout", 3*time.Minute, "the first request may be solving a challenge")
@@ -75,8 +78,19 @@ func fetchCmd(args []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
 
-	var leaser transport.Leaser
+	// One file, one format, both modes. Each port or session takes its own
+	// entry, because an address is the thing the budget is counted per: N
+	// ports sharing one IP rest that IP no better than one port would.
+	var upstreams []blanktrail.Upstream
 	var err error
+	if *proxies != "" {
+		upstreams, err = readProxies(ctx, *proxies)
+		if err != nil {
+			return err
+		}
+	}
+
+	var leaser transport.Leaser
 	switch *mode {
 	case "blanktrail":
 		apiKey := *key
@@ -86,9 +100,19 @@ func fetchCmd(args []string) error {
 		if apiKey == "" {
 			return fmt.Errorf("blanktrail mode needs a key: -key or %s", keyEnv)
 		}
+		var channels []blanktrail.Channel
+		if len(upstreams) > 0 {
+			// One port, one proxy: the pool hands each freshly opened port the
+			// next entry, so N ports carry N addresses rather than N sessions
+			// behind one.
+			channels = []blanktrail.Channel{
+				blanktrail.NewListChannel("pool", blanktrail.NewStaticRotor(upstreams)),
+			}
+		}
 		leaser, err = bt.Open(ctx, bt.Config{
 			ControlURL: *control, APIKey: apiKey,
 			Ports: *ports, Surface: surface,
+			Channels: channels, Addresses: len(upstreams),
 			// The proxy re-signs origins with its own MITM CA. Increment 3
 			// pins it through Preflight; here the operator is at the terminal.
 			Insecure: true,
@@ -101,6 +125,7 @@ func fetchCmd(args []string) error {
 		leaser, err = direct.Open(direct.Config{
 			Surface: surface, Sessions: *sessions,
 			Root: r, StatePath: *statePath,
+			Upstreams: upstreamURLs(upstreams),
 		})
 	default:
 		return fmt.Errorf("unknown mode %q", *mode)
@@ -194,4 +219,37 @@ func wrap(s string, width int) string {
 		line += len(word)
 	}
 	return out.String()
+}
+
+// readProxies loads the egress list. The format is the SDK's, so one file
+// serves both modes and neither grows a parser of its own.
+//
+// A file that was named and yielded nothing is an error rather than a silent
+// fall back to the host's own address: the reason to pass -proxies is that
+// leaving from one IP is not what was wanted, and doing it anyway while the
+// budget counts otherwise is how an installation gets banned.
+func readProxies(ctx context.Context, path string) ([]blanktrail.Upstream, error) {
+	src := blanktrail.Source{Kind: "file", Location: path, DefaultScheme: "socks5"}
+	ups, bad, err := src.Load(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, b := range bad {
+		fmt.Fprintf(os.Stderr, "warn  unparsable proxy line: %s\n", b)
+	}
+	if len(ups) == 0 {
+		return nil, fmt.Errorf("%s yielded no usable proxies", path)
+	}
+	return ups, nil
+}
+
+func upstreamURLs(ups []blanktrail.Upstream) []string {
+	if len(ups) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(ups))
+	for _, u := range ups {
+		out = append(out, u.URL())
+	}
+	return out
 }
