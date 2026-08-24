@@ -38,6 +38,10 @@ func main() {
 		err = transportCmd(os.Args[2:])
 	case "volume":
 		err = volumeCmd(os.Args[2:])
+	case "watch":
+		err = watchCmd(os.Args[2:])
+	case "run":
+		err = runCmd(os.Args[2:])
 	default:
 		usage()
 		os.Exit(2)

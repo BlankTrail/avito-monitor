@@ -186,3 +186,37 @@ func TestAddressesNeverExceedsTheProxyPool(t *testing.T) {
 		}
 	}
 }
+
+// TestTwoPoolsNeverShareASessionString.
+//
+// The seam's contract is that Session changes exactly when the identity does.
+// The SDK spells a session "port#counter" and the counter starts at zero every
+// time a pool opens, so two genuinely different identities on port 20000 both
+// recorded "20000#0" — measured on two live runs minutes apart, which wrote the
+// same string and shared eight of thirty listings where a stable identity
+// shares thirty of thirty.
+//
+// A caller keying a visit on that string would treat the two as one, and every
+// absence it computed across the restart would be nonsense.
+func TestTwoPoolsNeverShareASessionString(t *testing.T) {
+	srv := fakebt.New(t)
+
+	sessionFrom := func() string {
+		t.Helper()
+		l := open(t, srv, avito.SurfaceMobile, 1)
+		defer l.Close()
+		lease, err := l.Acquire(context.Background())
+		if err != nil {
+			t.Fatalf("Acquire: %v", err)
+		}
+		defer lease.Release()
+		return lease.Session()
+	}
+
+	first, second := sessionFrom(), sessionFrom()
+	if first == second {
+		t.Errorf("two pools produced the same session %q; the counter restarts "+
+			"at zero on every open, so the string has to carry something that "+
+			"does not", first)
+	}
+}

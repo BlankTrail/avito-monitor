@@ -12,7 +12,9 @@ package bt
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/x509"
+	"encoding/hex"
 	"fmt"
 	"strconv"
 	"time"
@@ -67,6 +69,20 @@ type Leaser struct {
 	pool *blanktrail.Pool
 	caps transport.Caps
 	prof transport.Profile
+
+	// origin distinguishes this pool's identities from those of any other
+	// pool, including the one this process had before it restarted.
+	//
+	// The SDK spells a session "port#counter", and the counter starts at zero
+	// every time a pool is opened. Two genuinely different identities on port
+	// 20000 therefore both record "20000#0" — which was measured happening:
+	// two runs minutes apart wrote the same session string and shared eight of
+	// thirty listings, while a truly stable identity shares thirty of thirty.
+	//
+	// The seam's contract is that Session changes exactly when the identity
+	// does. Reopening a port mints a new identity at the proxy, so the string
+	// has to move with it.
+	origin string
 }
 
 // Open builds the pool.
@@ -109,8 +125,13 @@ func Open(ctx context.Context, cfg Config) (*Leaser, error) {
 	if err != nil {
 		return nil, fmt.Errorf("bt: open pool: %w", err)
 	}
+	origin := make([]byte, 6)
+	if _, err := rand.Read(origin); err != nil {
+		return nil, fmt.Errorf("bt: identity origin: %w", err)
+	}
 	return &Leaser{
-		pool: pool,
+		origin: hex.EncodeToString(origin),
+		pool:   pool,
 		caps: transport.Caps{
 			SolvesChallenges: true,
 			RotatesEgress:    rotates,
@@ -178,7 +199,7 @@ func (l *Leaser) Acquire(ctx context.Context) (transport.Lease, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &portLease{Lease: lease, prof: l.prof}, nil
+	return &portLease{Lease: lease, prof: l.prof, origin: l.origin}, nil
 }
 
 // portLease adds the two seam methods the SDK does not have. Everything else —
@@ -186,8 +207,17 @@ func (l *Leaser) Acquire(ctx context.Context) (transport.Lease, error) {
 // is why this file is short.
 type portLease struct {
 	*blanktrail.Lease
-	prof transport.Profile
+	prof   transport.Profile
+	origin string
 }
+
+// Session is the SDK's, prefixed by this pool's origin.
+//
+// Without the prefix the string repeats across restarts — the SDK counts from
+// zero each time a pool opens — and a caller keying a visit on it would treat
+// two different identities as one. Measured: that is not hypothetical, and the
+// two identities in question saw eight of thirty listings in common.
+func (p *portLease) Session() string { return p.origin + "/" + p.Lease.Session() }
 
 func (p *portLease) Label() string { return "blanktrail:" + strconv.Itoa(p.Port()) }
 

@@ -103,6 +103,12 @@ type Result struct {
 	Attempts int
 	Session  string
 	Label    string
+	// Egress is the exit address, and it is NOT Label. Label names the
+	// endpoint — "direct:chrome-133-android#0", "blanktrail:20000" — and the
+	// passes table has a column for each. Writing the label into the egress
+	// column would repeat in history the mistake the pacer made in memory, and
+	// history cannot be corrected the way a live rate can.
+	Egress string
 	// Body is kept only for a verdict worth reading later — a shape change or
 	// a mangled body. Keeping every body would be an archive nobody asked for.
 	Body []byte
@@ -142,6 +148,10 @@ type Fetcher struct {
 	pacer  *Pacer
 	cfg    FetchConfig
 }
+
+// Mode is which transport is behind this fetcher. The pass row records it, and
+// the ladder is the only thing holding the leaser.
+func (f *Fetcher) Mode() Mode { return f.leaser.Mode() }
 
 func NewFetcher(l Leaser, p *Pacer, cfg FetchConfig) *Fetcher {
 	if cfg.Now == nil {
@@ -189,7 +199,7 @@ func (f *Fetcher) Fetch(ctx context.Context, target string) (Result, error) {
 			return res, err
 		}
 		res.Attempts = attempt
-		res.Session, res.Label = lease.Session(), lease.Label()
+		res.Session, res.Label, res.Egress = lease.Session(), lease.Label(), lease.Egress()
 
 		status, body, doErr := f.once(ctx, lease, target)
 		res.Status = status
