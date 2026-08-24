@@ -172,21 +172,27 @@ Copy `S:\Projects\WB_GO\internal\store\migrate.go` to `internal/store/migrate.go
 
 Create `internal/store/migrations/0001_avito.sql`. Its content is the spec's §Schema — migration 0001, lines 611 to 1433, **copied verbatim**, comments included. Do not retype it and do not summarise it:
 
+The schema is **not** in a fenced code block. It is raw text between the heading
+and the `---` that closes the section, so looking for a fence finds the one
+belonging to §Packages and extracts thirty-two lines of nothing. Anchor on the
+SPDX line that opens the SQL and on the section rule that ends it:
+
 ```bash
 cd S:/Projects/Avito_Go && python - <<'PY'
 import io
-spec = io.open('docs/superpowers/specs/2026-08-23-avito-monitor-m1-design.md', encoding='utf-8').read().split('\n')
-# The schema is the fenced sql block under "# Schema — migration 0001".
-start = next(i for i, l in enumerate(spec) if l.startswith('# Schema'))
-begin = next(i for i in range(start, len(spec)) if spec[i].startswith('```'))
-end = next(i for i in range(begin + 1, len(spec)) if spec[i].startswith('```'))
-body = '\n'.join(spec[begin + 1:end])
-io.open('internal/store/migrations/0001_avito.sql', 'w', encoding='utf-8', newline='\n').write(body + '\n')
-print('wrote', len(body.split('\n')), 'lines,', body.count('CREATE TABLE'), 'tables')
+lines = io.open('docs/superpowers/specs/2026-08-23-avito-monitor-m1-design.md', encoding='utf-8').read().split('\n')
+start = next(i for i, l in enumerate(lines) if l.startswith('# Schema'))
+begin = next(i for i in range(start, len(lines)) if lines[i].startswith('-- SPDX'))
+end   = next(i for i in range(begin, len(lines)) if lines[i].strip() == '---')
+body = '\n'.join(lines[begin:end]).rstrip() + '\n'
+io.open('internal/store/migrations/0001_avito.sql', 'w', encoding='utf-8', newline='\n').write(body)
+print('lines', body.count('\n'), '| tables', body.count('CREATE TABLE'), '| indexes', body.count('CREATE INDEX'))
 PY
 ```
 
-Expected: 21 tables. If the count differs, stop — the extraction picked up the wrong block, and a partial schema is worse than none.
+Expected: **818 lines, 21 tables, 23 indexes.** If any of the three differs,
+stop — the extraction took the wrong range, and a partial schema is worse than
+none.
 
 - [ ] **Step 6: Write `store.go`**
 
