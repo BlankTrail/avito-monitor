@@ -17,18 +17,6 @@ func (s *Server) todo(w http.ResponseWriter, r *http.Request, screen string) {
 	})
 }
 
-func (s *Server) watchesPage(w http.ResponseWriter, r *http.Request) {
-	s.todo(w, r, "Наблюдения")
-}
-func (s *Server) saveWatch(w http.ResponseWriter, r *http.Request) {
-	s.todo(w, r, "Наблюдения")
-}
-func (s *Server) deleteWatch(w http.ResponseWriter, r *http.Request) {
-	s.todo(w, r, "Наблюдения")
-}
-func (s *Server) toggleWatch(w http.ResponseWriter, r *http.Request) {
-	s.todo(w, r, "Наблюдения")
-}
 func (s *Server) settingsPage(w http.ResponseWriter, r *http.Request) {
 	s.todo(w, r, "Настройки")
 }
