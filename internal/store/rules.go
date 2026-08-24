@@ -357,3 +357,100 @@ func (s *Store) Enqueue(ctx context.Context, o OutboxRow) error {
 	}
 	return nil
 }
+
+// DueMessage is one outbox row that is ready to go, with the address it goes
+// to. The join is what carries the address: the worker never learns what a
+// target row is, only where this message is going.
+type DueMessage struct {
+	ID       int64
+	TargetID int64
+	Address  string
+	Kind     string
+	Body     string
+	Attempts int
+}
+
+// DueMessages is the worker's only question: what is pending, ready, and has
+// somebody switched on to receive it.
+//
+// The join filters on enabled = 1 and leaves everything else untouched. A row
+// for a disabled target stays pending rather than being consumed — turning a
+// target back on must not reveal that everything which arrived while it was off
+// had been silently eaten.
+func (s *Store) DueMessages(ctx context.Context, now int64, limit int) ([]DueMessage, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT o.id, o.target_id, t.address, t.kind, o.body, o.attempts
+		FROM notify_outbox o
+		JOIN notify_targets t ON t.id = o.target_id
+		WHERE o.state = 'pending' AND o.due_at <= ? AND t.enabled = 1
+		ORDER BY o.due_at, o.id
+		LIMIT ?`, now, limit)
+	if err != nil {
+		return nil, fmt.Errorf("store: due messages: %w", err)
+	}
+	defer rows.Close()
+
+	var out []DueMessage
+	for rows.Next() {
+		var m DueMessage
+		if err := rows.Scan(&m.ID, &m.TargetID, &m.Address, &m.Kind,
+			&m.Body, &m.Attempts); err != nil {
+			return nil, fmt.Errorf("store: due messages: %w", err)
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
+// MarkSent records a delivery.
+//
+// last_error is cleared, because a row that went out carrying the text of the
+// failure before it would show that failure in the panel for ever.
+func (s *Store) MarkSent(ctx context.Context, id, at int64) error {
+	s.wmu.Lock()
+	defer s.wmu.Unlock()
+	if _, err := s.db.ExecContext(ctx, `
+		UPDATE notify_outbox
+		SET state = 'sent', sent_at = ?, attempts = attempts + 1, last_error = ''
+		WHERE id = ? AND state = 'pending'`, at, id); err != nil {
+		return fmt.Errorf("store: mark sent: %w", err)
+	}
+	return nil
+}
+
+// MarkRetry records a failed attempt and when to try again.
+//
+// dueAt is an absolute moment rather than a delay. Storing "wait five minutes"
+// would mean a machine that reboots every four minutes retries for ever at the
+// first backoff and never reaches the point of giving up.
+func (s *Store) MarkRetry(ctx context.Context, id, dueAt int64, reason string) error {
+	s.wmu.Lock()
+	defer s.wmu.Unlock()
+	if _, err := s.db.ExecContext(ctx, `
+		UPDATE notify_outbox
+		SET attempts = attempts + 1, due_at = ?, last_error = ?
+		WHERE id = ? AND state = 'pending'`, dueAt, reason, id); err != nil {
+		return fmt.Errorf("store: mark retry: %w", err)
+	}
+	return nil
+}
+
+// MarkGivenUp stops retrying this row.
+//
+// The reason is kept rather than the row being deleted: the panel shows what
+// went wrong, and a message that vanished is indistinguishable from one that
+// was never queued.
+func (s *Store) MarkGivenUp(ctx context.Context, id int64, reason string) error {
+	s.wmu.Lock()
+	defer s.wmu.Unlock()
+	if _, err := s.db.ExecContext(ctx, `
+		UPDATE notify_outbox
+		SET state = 'failed', attempts = attempts + 1, last_error = ?
+		WHERE id = ? AND state = 'pending'`, reason, id); err != nil {
+		return fmt.Errorf("store: mark given up: %w", err)
+	}
+	return nil
+}
