@@ -1,0 +1,16 @@
+-- SPDX-License-Identifier: AGPL-3.0-or-later
+--
+-- Who wrote this rule: the program, or the person.
+--
+-- The spec's rules table has no such column, and 0001 is the spec extracted
+-- verbatim. It is needed because M1 seeds nine rules on a fresh install so that
+-- a first watch produces messages without anybody opening the rule editor, and
+-- a person who then finds nine rules they did not write has to be told which
+-- ones those are. Without it the panel can only guess — by name, which they can
+-- edit, or by id, which is not a fact about provenance at all.
+--
+-- It is what makes deleting one an informed act rather than a surprise later,
+-- and it is what lets the seeder know it has already run: a defaults pass that
+-- counted rows instead would re-create every default the first time somebody
+-- deleted one they did not want.
+ALTER TABLE rules ADD COLUMN from_defaults INTEGER NOT NULL DEFAULT 0;
