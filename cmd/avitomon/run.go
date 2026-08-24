@@ -113,12 +113,16 @@ func runOnce(ctx context.Context, s *store.Store, f *transport.Fetcher, w store.
 		Session: res.Session, Egress: res.Egress,
 		ElapsedMS: (finished - started) * 1000,
 		Bytes:     int64(len(res.Body)),
-		// evidential gets its real admissibility tests in increment 4, where
-		// the lifecycle that depends on them lives. Here it is the honest
-		// floor: a class that answered.
-		Evidential: res.Verdict.Class == transport.ClassOK ||
-			res.Verdict.Class == transport.ClassEmpty,
+		// Evidential is deliberately not set. Increment 3 passed a floor in by
+		// hand — a class that answered — with a note saying the real tests
+		// were increment 4's. They are, they live in internal/lifecycle, and
+		// SavePass applies them inside the transaction; anything written here
+		// would be overwritten.
 		TotalCount: res.Page.TotalCount,
+		// Degraded is an input to that verdict: a warning on the extraction
+		// report means the page was read, but not cleanly enough to argue from
+		// what is missing.
+		Degraded: len(res.Page.Report.Warnings) > 0,
 	}
 	if ferr != nil {
 		p.Error = ferr.Error()
@@ -130,6 +134,15 @@ func runOnce(ctx context.Context, s *store.Store, f *transport.Fetcher, w store.
 	fmt.Printf("watch %d  pass %d  class=%s  listings=%d  arrivals=%d  snapshots=%d\n",
 		w.ID, saved.PassID, p.Class, len(res.Page.Listings),
 		saved.Arrivals, saved.Snapshots)
+	// Say why nothing will be concluded from this pass, rather than leaving a
+	// person to wonder why their watch is quiet. The two verdicts answer
+	// different questions and both are worth printing.
+	if !saved.Admissible.Admissible {
+		fmt.Printf("  not evidence of absence: %s\n", saved.Admissible.Why)
+	}
+	if !saved.Comparable.Admissible {
+		fmt.Printf("  not comparable with the last pass: %s\n", saved.Comparable.Why)
+	}
 
 	var halt *transport.HaltError
 	if errors.As(ferr, &halt) {
@@ -174,13 +187,19 @@ func openLeaser(ctx context.Context, s *store.Store, mode transport.Mode,
 	case transport.ModeDirect:
 		// The identity is persisted by default, and that is not a convenience.
 		//
-		// Measured 2026-08-24: Avito's result set depends on srv_id. Two passes
-		// of the same date-sorted URL minutes apart, on two fresh identities,
-		// returned thirty listings each with ZERO overlap; the same two passes
-		// on one persisted identity overlapped thirty of thirty. A monitor that
-		// mints a new identity per run therefore sees a complete turnover every
-		// tick — thirty arrivals and thirty disappearances, for ever — and
-		// every alert it sends is false.
+		// Measured 2026-08-24 on this surface: in DIRECT mode the result set is
+		// a function of srv_id and is exact inside a session. Six passes over
+		// two identities gave 100% overlap within an identity, every pair, and
+		// 23% across them; two fresh identities shared zero of thirty. So a
+		// monitor that mints a new identity per run sees a complete turnover
+		// every tick — thirty arrivals and thirty disappearances, for ever —
+		// and every alert it sends is false.
+		//
+		// Sessions is 1 for the same reason, and it is a correctness setting
+		// rather than a performance one: two identities in the pool are two
+		// markets 23% alike, and a watch taking whichever is rested differences
+		// one against the other. The soak had already found the jar pool a bad
+		// trade for throughput; this makes it a wrong answer as well.
 		state := o.statePath
 		if state == "" {
 			state = s.Path() + ".identities.json"

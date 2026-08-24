@@ -10,28 +10,42 @@ import (
 	"strings"
 
 	"github.com/BlankTrail/avito-monitor/avito"
+	"github.com/BlankTrail/avito-monitor/internal/lifecycle"
 )
 
 // Pass is one fetch of one page of one watch, as the collector saw it.
 type Pass struct {
-	WatchID     int64
-	StartedAt   int64
-	FinishedAt  int64
-	Page        int
-	Surface     avito.Surface
-	Class       string
-	HTTPStatus  int
-	Path        string
-	Mode        string
-	Session     string
-	Egress      string
-	ElapsedMS   int64
-	Bytes       int64
-	TotalCount  *int64
+	WatchID    int64
+	StartedAt  int64
+	FinishedAt int64
+	Page       int
+	Surface    avito.Surface
+	Class      string
+	HTTPStatus int
+	Path       string
+	Mode       string
+	Session    string
+	Egress     string
+	ElapsedMS  int64
+	Bytes      int64
+	TotalCount *int64
+	// Degraded is the ExtractionReport carrying a warning. It is an INPUT to
+	// the verdict.
+	Degraded bool
+
+	Error string
+
+	// IsSeed, Evidential and DegradedWhy are OUTPUTS. SavePass computes them
+	// from lifecycle and overwrites whatever a caller put here.
+	//
+	// They are on this struct rather than in a separate one so that insertPass
+	// takes a single value, and the doc comment is the guard: increment 3 let
+	// a caller pass a floor in by hand, and the column is what every later
+	// query about absence reads. A soft block must not become evidence because
+	// somebody filled in a field.
 	IsSeed      bool
 	Evidential  bool
 	DegradedWhy string
-	Error       string
 }
 
 // SaveResult is what the caller needs back: the id to hang changes off, and the
@@ -40,6 +54,16 @@ type SaveResult struct {
 	PassID    int64
 	Arrivals  int
 	Snapshots int
+
+	// The verdicts this pass was written under, returned so a caller can say
+	// why nothing was reported without re-deriving it.
+	Facts      lifecycle.PassFacts
+	Admissible lifecycle.Verdict
+	Comparable lifecycle.Verdict
+
+	// Previous is what the watch believed was present before this pass. The
+	// window producer needs it and it is gone by the time the transaction ends.
+	Previous map[int64]bool
 }
 
 // SavePass writes one pass and everything it implies, in one transaction.
@@ -59,7 +83,11 @@ func (s *Store) SavePass(ctx context.Context, p Pass, listings []avito.Listing) 
 	}
 	defer tx.Rollback() //nolint:errcheck // a committed tx's Rollback is a no-op
 
-	res, err := savePassTx(ctx, tx, p, listings, s.Retention())
+	w, err := watchInTx(ctx, tx, p.WatchID)
+	if err != nil {
+		return SaveResult{}, err
+	}
+	res, err := savePassTx(ctx, tx, p, listings, s.Retention(), w)
 	if err != nil {
 		return SaveResult{}, err
 	}
@@ -69,11 +97,25 @@ func (s *Store) SavePass(ctx context.Context, p Pass, listings []avito.Listing) 
 	return res, nil
 }
 
-func savePassTx(ctx context.Context, tx *sql.Tx, p Pass, listings []avito.Listing, r Retention) (SaveResult, error) {
+func savePassTx(ctx context.Context, tx *sql.Tx, p Pass, listings []avito.Listing, r Retention, w Watch) (SaveResult, error) {
 	var out SaveResult
 
-	// What this watch believed was present before this pass. Read first,
-	// because the membership update below overwrites it.
+	// The two verdicts, computed here and never taken from the caller. This
+	// column is what every later query about absence reads, so a caller must
+	// not be able to mark a soft block as evidence by filling in a field.
+	prev, err := readPrevPass(ctx, tx, p.WatchID)
+	if err != nil {
+		return out, err
+	}
+	facts := passFacts(p, w, prev)
+	adm := lifecycle.Admissible(facts)
+	out.Facts, out.Admissible, out.Comparable = facts, adm, lifecycle.Comparable(facts)
+	p.IsSeed = facts.IsSeed
+	p.Evidential = adm.Admissible
+	p.DegradedWhy = adm.Why
+
+	// What this watch believed was present before this pass. Read before the
+	// membership update below overwrites it.
 	previous, err := presentMembers(ctx, tx, p.WatchID)
 	if err != nil {
 		return out, err
@@ -114,7 +156,34 @@ func savePassTx(ctx context.Context, tx *sql.Tx, p Pass, listings []avito.Listin
 	if err := updateMembers(ctx, tx, p, listings); err != nil {
 		return out, err
 	}
+	if err := updateBaseline(ctx, tx, p, p.Evidential); err != nil {
+		return out, err
+	}
+	// The window producer runs last and inside this transaction, because a set
+	// difference against the previous window must not be observed
+	// half-written: a reader that saw the arrivals without the departures
+	// would draw the wrong conclusion from a snapshot that looked consistent.
+	if err := produceWindow(ctx, tx, p, passID, listings, previous,
+		out.Arrivals, adm, out.Comparable, w); err != nil {
+		return out, err
+	}
+	out.Previous = previous
 	return out, nil
+}
+
+// watchInTx reads the watch inside the transaction. The interval and the
+// surface are inputs to the verdicts, and reading them outside would let a
+// concurrent edit change the rule mid-pass.
+func watchInTx(ctx context.Context, tx *sql.Tx, id int64) (Watch, error) {
+	w, err := scanWatch(tx.QueryRowContext(ctx,
+		`SELECT `+watchColumns+` FROM watches WHERE id = ?`, id))
+	if errors.Is(err, sql.ErrNoRows) {
+		return Watch{}, ErrNoSuchWatch
+	}
+	if err != nil {
+		return Watch{}, fmt.Errorf("store: watch %d: %w", id, err)
+	}
+	return w, nil
 }
 
 func presentMembers(ctx context.Context, tx *sql.Tx, watchID int64) (map[int64]bool, error) {
@@ -291,11 +360,23 @@ func updateMembers(ctx context.Context, tx *sql.Tx, p Pass, listings []avito.Lis
 	// alone afterwards, because the absence gate needs an elapsed span as well
 	// as a count: two confirmations twenty seconds apart are one page of churn,
 	// and two twenty minutes apart are evidence.
+	// Every absent member, not only the ones that were present last time.
+	//
+	// The first draft filtered on present = 1, which froze the streak at one:
+	// a listing missing from its second pass was already present = 0 and so
+	// was never updated again, and absence_confirmations of two could never be
+	// reached — no disappearance would ever have been confirmed. Found by
+	// increment 4's window tests, which are the first thing to read the counter
+	// rather than only write it.
+	//
+	// missing_since is coalesced rather than overwritten, so it keeps the
+	// moment the listing was FIRST missed. That is what the span gate measures,
+	// and refreshing it every pass would make the span permanently zero.
 	q := `UPDATE watch_members
 	      SET missing_streak = missing_streak + 1,
 	          missing_since  = coalesce(missing_since, ?),
 	          present        = 0
-	      WHERE watch_id = ? AND present = 1`
+	      WHERE watch_id = ?`
 	args := []any{p.StartedAt, p.WatchID}
 	if len(seen) > 0 {
 		q += ` AND item_id NOT IN (` + placeholders(len(seen)) + `)`

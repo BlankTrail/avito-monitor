@@ -42,6 +42,8 @@ func main() {
 		err = watchCmd(os.Args[2:])
 	case "run":
 		err = runCmd(os.Args[2:])
+	case "changes":
+		err = changesCmd(os.Args[2:])
 	default:
 		usage()
 		os.Exit(2)
@@ -71,6 +73,7 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "  avitomon transport show|set direct|blanktrail")
 	fmt.Fprintln(os.Stderr, "  avitomon watch add [flags] <url>")
 	fmt.Fprintln(os.Stderr, "  avitomon run --once [flags]")
+	fmt.Fprintln(os.Stderr, "  avitomon changes [flags]")
 	fmt.Fprintln(os.Stderr, "  avitomon volume [flags]")
 }
 
