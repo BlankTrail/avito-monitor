@@ -61,3 +61,24 @@ func transportCmd(args []string) error {
 		return fmt.Errorf("unknown transport subcommand %q", fs.Arg(0))
 	}
 }
+
+func volumeCmd(args []string) error {
+	fs := flag.NewFlagSet("volume", flag.ExitOnError)
+	dbPath := fs.String("db", "avito.db", "database file")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	ctx := context.Background()
+	s, err := store.Open(ctx, *dbPath)
+	if err != nil {
+		return err
+	}
+	defer s.Close()
+
+	v, err := s.Volume(ctx)
+	if err != nil {
+		return err
+	}
+	fmt.Print(v.String())
+	return nil
+}

@@ -36,6 +36,8 @@ func main() {
 		err = fetchCmd(os.Args[2:])
 	case "transport":
 		err = transportCmd(os.Args[2:])
+	case "volume":
+		err = volumeCmd(os.Args[2:])
 	default:
 		usage()
 		os.Exit(2)

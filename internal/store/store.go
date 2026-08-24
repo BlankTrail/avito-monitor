@@ -36,6 +36,10 @@ type Store struct {
 	// settings and neither may be unset. An unset struct means the defaults,
 	// never "unbounded".
 	retention atomic.Pointer[Retention]
+
+	// floor overrides the absolute free-space floor. Zero is unset and means
+	// the default, never "no floor".
+	floor atomic.Int64
 }
 
 // Retention is the thresholds this store thins by. A zero value has never been
