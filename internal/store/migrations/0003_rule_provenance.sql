@@ -9,8 +9,8 @@
 -- ones those are. Without it the panel can only guess — by name, which they can
 -- edit, or by id, which is not a fact about provenance at all.
 --
--- It is what makes deleting one an informed act rather than a surprise later,
--- and it is what lets the seeder know it has already run: a defaults pass that
--- counted rows instead would re-create every default the first time somebody
--- deleted one they did not want.
+-- It is what makes deleting one an informed act rather than a surprise later.
+-- It is not, on its own, how the seeder knows it has already run — a person who
+-- deletes a default they did not want leaves no from_defaults row behind either,
+-- so that question needs its own answer and gets one where the seeding happens.
 ALTER TABLE rules ADD COLUMN from_defaults INTEGER NOT NULL DEFAULT 0;
