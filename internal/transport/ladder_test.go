@@ -610,3 +610,42 @@ func TestASoftBlockGivesUpAfterTwoRecycles(t *testing.T) {
 			"minutes and that is the defect this replaced", total)
 	}
 }
+
+// TestASuccessfulFetchStillReportsHowBigThePageWas.
+//
+// Body is dropped on success on purpose — keeping every body would be an
+// archive nobody asked for — so passes.bytes read it off len(Body) and recorded
+// zero for every pass that worked. The column exists to say what a pass cost,
+// which makes zero the one value it must never report for a page that arrived.
+func TestASuccessfulFetchStillReportsHowBigThePageWas(t *testing.T) {
+	now := time.Date(2026, 8, 23, 12, 0, 0, 0, time.UTC)
+	l := &recordingLease{warm: true, replies: []reply{{200, okBody}}}
+	f, _ := newTestFetcher(t, l, Caps{SolvesChallenges: true, RotatesEgress: true}, &now)
+
+	res, err := f.Fetch(context.Background(), "https://m.avito.ru/all?q=x")
+	if err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+	if len(res.Body) != 0 {
+		t.Errorf("a successful fetch kept %d bytes of body", len(res.Body))
+	}
+	if res.Bytes != len(okBody) {
+		t.Errorf("Bytes = %d, want %d", res.Bytes, len(okBody))
+	}
+}
+
+// TestTheByteCountIsTheLastReplyAndNotTheSum. A fetch that was refused once and
+// retried read two pages; the pass it writes is about the one it kept.
+func TestTheByteCountIsTheLastReplyAndNotTheSum(t *testing.T) {
+	now := time.Date(2026, 8, 23, 12, 0, 0, 0, time.UTC)
+	l := &recordingLease{warm: true, replies: []reply{{403, emptyBody}, {200, okBody}}}
+	f, _ := newTestFetcher(t, l, Caps{SolvesChallenges: true, RotatesEgress: true}, &now)
+
+	res, err := f.Fetch(context.Background(), "https://m.avito.ru/all?q=x")
+	if err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+	if res.Bytes != len(okBody) {
+		t.Errorf("Bytes = %d, want the %d of the reply it kept", res.Bytes, len(okBody))
+	}
+}

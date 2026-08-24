@@ -4,6 +4,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 
@@ -96,4 +97,101 @@ func (s *Store) SetBlankTrailConfig(ctx context.Context, c BlankTrailConfig) err
 		return fmt.Errorf("store: set blanktrail config: %w", err)
 	}
 	return nil
+}
+
+// StoreMTProtoSession keeps the MTProto session in the database rather than
+// beside the binary.
+//
+// It is a credential in the strongest sense — anyone holding it is the bot —
+// and gotd's convenient default is a file in the working directory. The column
+// is a BLOB the panel does not display, and these two functions are the only
+// way in or out of it.
+func (s *Store) StoreMTProtoSession(ctx context.Context, data []byte) error {
+	s.wmu.Lock()
+	defer s.wmu.Unlock()
+	if _, err := s.db.ExecContext(ctx,
+		`UPDATE settings SET telegram_mtproto_session = ?, updated_at = ?
+		 WHERE id = 1`, data, s.now().UTC().Unix()); err != nil {
+		// The blob is never interpolated into this message, and neither is
+		// anything derived from it.
+		return fmt.Errorf("store: mtproto session: %w", err)
+	}
+	return nil
+}
+
+// MTProtoSession reads it back. A nil slice means there is none yet, which is
+// what a first run looks like and is not an error.
+func (s *Store) MTProtoSession(ctx context.Context) ([]byte, error) {
+	var b []byte
+	err := s.db.QueryRowContext(ctx,
+		`SELECT telegram_mtproto_session FROM settings WHERE id = 1`).Scan(&b)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("store: mtproto session: %w", err)
+	}
+	return b, nil
+}
+
+// TelegramConfig is the three credentials the delivery ladder needs.
+type TelegramConfig struct {
+	BotToken string
+	APIID    int
+	APIHash  string
+}
+
+// TelegramConfig reads them.
+//
+// They are returned together because a rung needs all three or none: MTProto's
+// bot login takes the token AND the application identity, and fetching them one
+// at a time would let a caller check one and dial on the strength of it.
+func (s *Store) TelegramConfig(ctx context.Context) (TelegramConfig, error) {
+	var c TelegramConfig
+	err := s.db.QueryRowContext(ctx,
+		`SELECT telegram_token, telegram_api_id, telegram_api_hash
+		 FROM settings WHERE id = 1`).Scan(&c.BotToken, &c.APIID, &c.APIHash)
+	if errors.Is(err, sql.ErrNoRows) {
+		return c, nil
+	}
+	if err != nil {
+		// Nothing read is echoed back: two of these three are credentials.
+		return TelegramConfig{}, fmt.Errorf("store: telegram config: %w", err)
+	}
+	return c, nil
+}
+
+// SetTelegramConfig writes them.
+func (s *Store) SetTelegramConfig(ctx context.Context, c TelegramConfig) error {
+	s.wmu.Lock()
+	defer s.wmu.Unlock()
+	if _, err := s.db.ExecContext(ctx, `
+		UPDATE settings
+		SET telegram_token = ?, telegram_api_id = ?, telegram_api_hash = ?,
+		    updated_at = ?
+		WHERE id = 1`,
+		c.BotToken, c.APIID, c.APIHash, s.now().UTC().Unix()); err != nil {
+		return fmt.Errorf("store: telegram config: %w", err)
+	}
+	return nil
+}
+
+// mtprotoSession adapts the store to what internal/telegram wants, which is
+// gotd's session.Storage signature.
+type mtprotoSession struct{ s *Store }
+
+// MTProtoSessionStore is the store as a session storage.
+func (s *Store) MTProtoSessionStore() interface {
+	LoadSession(ctx context.Context) ([]byte, error)
+	StoreSession(ctx context.Context, data []byte) error
+} {
+	return mtprotoSession{s: s}
+}
+
+func (m mtprotoSession) LoadSession(ctx context.Context) ([]byte, error) {
+	return m.s.MTProtoSession(ctx)
+}
+
+func (m mtprotoSession) StoreSession(ctx context.Context, data []byte) error {
+	return m.s.StoreMTProtoSession(ctx, data)
 }

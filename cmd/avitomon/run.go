@@ -112,7 +112,7 @@ func runOnce(ctx context.Context, s *store.Store, f *transport.Fetcher, w store.
 		Path: string(res.Page.Report.Path), Mode: string(f.Mode()),
 		Session: res.Session, Egress: res.Egress,
 		ElapsedMS: (finished - started) * 1000,
-		Bytes:     int64(len(res.Body)),
+		Bytes:     int64(res.Bytes),
 		// Evidential is deliberately not set. Increment 3 passed a floor in by
 		// hand — a class that answered — with a note saying the real tests
 		// were increment 4's. They are, they live in internal/lifecycle, and
@@ -142,6 +142,17 @@ func runOnce(ctx context.Context, s *store.Store, f *transport.Fetcher, w store.
 	}
 	if !saved.Comparable.Admissible {
 		fmt.Printf("  not comparable with the last pass: %s\n", saved.Comparable.Why)
+	}
+
+	// The rules run on what this pass produced, and the engine is built here
+	// rather than inside the store: internal/store must not learn what a rule
+	// is. A failure to notify does not fail the pass — the data is already
+	// written, and losing it because Telegram was unreachable would be the
+	// wrong trade.
+	if n, err := applyRules(ctx, s, w, started); err != nil {
+		fmt.Printf("  правила не отработали: %v\n", err)
+	} else if n > 0 {
+		fmt.Printf("  сообщений в очереди: %d\n", n)
 	}
 
 	var halt *transport.HaltError
@@ -188,12 +199,19 @@ func openLeaser(ctx context.Context, s *store.Store, mode transport.Mode,
 		// The identity is persisted by default, and that is not a convenience.
 		//
 		// Measured 2026-08-24 on this surface: in DIRECT mode the result set is
-		// a function of srv_id and is exact inside a session. Six passes over
-		// two identities gave 100% overlap within an identity, every pair, and
-		// 23% across them; two fresh identities shared zero of thirty. So a
-		// monitor that mints a new identity per run sees a complete turnover
-		// every tick — thirty arrivals and thirty disappearances, for ever —
-		// and every alert it sends is false.
+		// a function of srv_id. Six passes over two identities gave 100%
+		// overlap within an identity, every pair, and 23% across them; two
+		// fresh identities shared zero of thirty. So a monitor that mints a new
+		// identity per run sees a complete turnover every tick — thirty
+		// arrivals and thirty disappearances, for ever — and every alert it
+		// sends is false.
+		//
+		// "Exact inside a session" is how that first measurement put it, and a
+		// later one narrowed it: exact inside a MINUTE, and then decaying.
+		// Ten passes on one identity lost 39% of the window in under seven
+		// minutes on a busy query — see how-fast-the-window-turns-over.md. The
+		// identity is what makes two passes comparable at all; it does not make
+		// them comparable for ever.
 		//
 		// Sessions is 1 for the same reason, and it is a correctness setting
 		// rather than a performance one: two identities in the pool are two

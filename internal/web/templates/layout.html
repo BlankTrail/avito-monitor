@@ -1,0 +1,26 @@
+{{define "layout.html"}}<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{if .Title}}{{.Title}} — {{end}}Avito Monitor</title>
+<link rel="stylesheet" href="/static/monitor.css">
+</head>
+<body>
+<header class="top">
+  <a class="brand" href="/">Avito Monitor</a>
+  <nav class="tabs">
+    {{range .Tabs}}<a class="tab{{if .Active}} active{{end}}" href="{{.Href}}">{{.Label}}</a>{{end}}
+  </nav>
+</header>
+{{.Banner}}
+<main class="page">
+  {{if .Title}}<h1>{{.Title}}</h1>{{end}}
+  {{.Body}}
+</main>
+<footer class="foot">
+  <a href="{{.SourceURL}}" rel="noreferrer">Исходный код</a> · AGPL-3.0-or-later
+</footer>
+<script src="/static/app.js"></script>
+</body>
+</html>{{end}}
