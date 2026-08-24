@@ -54,7 +54,7 @@
 **Interfaces:**
 - Produces: `type Kind string` with the eleven M1 constants; `func Kinds() []Kind`; `type Unit string` with `UnitMinor`, `UnitPercent`, `UnitText`, `UnitCount`, `UnitNone`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```go
 // SPDX-License-Identifier: AGPL-3.0-or-later
@@ -127,7 +127,7 @@ func TestEveryKindIsSpelledInKebabCase(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run it and watch it fail**
+- [x] **Step 2: Run it and watch it fail**
 
 ```bash
 cd S:/Projects/Avito_Go && go test ./internal/track/ -run Kinds -v
@@ -135,7 +135,7 @@ cd S:/Projects/Avito_Go && go test ./internal/track/ -run Kinds -v
 
 Expected: FAIL to build — `undefined: Kind`.
 
-- [ ] **Step 3: Write `kinds.go`**
+- [x] **Step 3: Write `kinds.go`**
 
 ```go
 // SPDX-License-Identifier: AGPL-3.0-or-later
@@ -229,7 +229,7 @@ const (
 )
 ```
 
-- [ ] **Step 4: Write the purity guard**
+- [x] **Step 4: Write the purity guard**
 
 `internal/track/purity_test.go`, modelled on `avito`'s network guard:
 
@@ -266,7 +266,7 @@ func TestPackageIsPure(t *testing.T) {
 
 `time` is banned deliberately: a reading carries its own `TS`, and a producer that reached for the clock would date a change by when it was computed.
 
-- [ ] **Step 5: Run the tests and watch them pass**
+- [x] **Step 5: Run the tests and watch them pass**
 
 ```bash
 cd S:/Projects/Avito_Go && gofmt -w ./internal && go test ./internal/track/ -v 2>&1 | grep -E "^(---|ok|FAIL)"
@@ -274,7 +274,7 @@ cd S:/Projects/Avito_Go && gofmt -w ./internal && go test ./internal/track/ -v 2
 
 Expected: three PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 cd S:/Projects/Avito_Go && git add internal/track/ && git commit -m "$(cat <<'MSG'
@@ -343,7 +343,7 @@ func Diff(before, after Reading) ([]Change, error)
 func PercentChange(was, now int64) (float64, bool)
 ```
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```go
 // SPDX-License-Identifier: AGPL-3.0-or-later
@@ -579,7 +579,7 @@ func TestPercentChangeRefusesAnAppearance(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run it and watch it fail**
+- [x] **Step 2: Run it and watch it fail**
 
 ```bash
 cd S:/Projects/Avito_Go && go test ./internal/track/ -run 'Diff|Percent|Price|Title|Sort' -v
@@ -587,7 +587,7 @@ cd S:/Projects/Avito_Go && go test ./internal/track/ -run 'Diff|Percent|Price|Ti
 
 Expected: FAIL to build — `undefined: Reading`.
 
-- [ ] **Step 3: Write `track.go`**
+- [x] **Step 3: Write `track.go`**
 
 The shape is WB_GO's `internal/track/track.go`, with Avito's fields. Keep its all-pointers discipline and its identity check; replace `NmID`/`Dest`/`AppType` with `ItemID`/`Surface`, and the stock and rating fields with the price triple, the title and the bump time.
 
@@ -766,7 +766,7 @@ func PercentChange(was, now int64) (float64, bool) {
 }
 ```
 
-- [ ] **Step 4: Run the tests and watch them pass**
+- [x] **Step 4: Run the tests and watch them pass**
 
 ```bash
 cd S:/Projects/Avito_Go && gofmt -w ./internal && go test ./internal/track/ -v 2>&1 | grep -E "^(---|ok|FAIL|    )"
@@ -774,7 +774,7 @@ cd S:/Projects/Avito_Go && gofmt -w ./internal && go test ./internal/track/ -v 2
 
 Expected: every test and subtest PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd S:/Projects/Avito_Go && git add internal/track/ && git commit -m "$(cat <<'MSG'
@@ -842,7 +842,7 @@ type Verdict struct {
 func Admissible(p PassFacts) Verdict
 ```
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```go
 // SPDX-License-Identifier: AGPL-3.0-or-later
@@ -975,7 +975,7 @@ func TestAGapInCollectionIsNotEvidence(t *testing.T) {
 func ptr[T any](v T) *T { return &v }
 ```
 
-- [ ] **Step 2: Run it and watch it fail**
+- [x] **Step 2: Run it and watch it fail**
 
 ```bash
 cd S:/Projects/Avito_Go && go test ./internal/lifecycle/ -v
@@ -983,7 +983,7 @@ cd S:/Projects/Avito_Go && go test ./internal/lifecycle/ -v
 
 Expected: FAIL to build.
 
-- [ ] **Step 3: Write `evidence.go`**
+- [x] **Step 3: Write `evidence.go`**
 
 Every refusal carries a `Why`, because this value is written into
 `passes.degraded_why` and read by a person asking why their watch never reports
@@ -1001,11 +1001,11 @@ const reseedAfterIntervals = 3
 const collapseFraction = 4
 ```
 
-- [ ] **Step 4: Write the purity guard**
+- [x] **Step 4: Write the purity guard**
 
 Copy `internal/track/purity_test.go` into `internal/lifecycle/`, changing the package name and the message. `lifecycle` has the same rule and the same reason.
 
-- [ ] **Step 5: Run the tests and watch them pass**
+- [x] **Step 5: Run the tests and watch them pass**
 
 ```bash
 cd S:/Projects/Avito_Go && gofmt -w ./internal && go test ./internal/lifecycle/ -v 2>&1 | grep -E "^(---|ok|FAIL|    )"
@@ -1013,7 +1013,7 @@ cd S:/Projects/Avito_Go && gofmt -w ./internal && go test ./internal/lifecycle/ 
 
 Expected: every test PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 cd S:/Projects/Avito_Go && git add internal/lifecycle/ && git commit -m "$(cat <<'MSG'
@@ -1059,7 +1059,7 @@ every gate in Task 3 is defeated by a fact the design did not know.
 **Interfaces:**
 - Produces: `func Comparable(p PassFacts) Verdict`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```go
 // SPDX-License-Identifier: AGPL-3.0-or-later
@@ -1132,7 +1132,7 @@ func TestComparableIsSeparateFromAdmissible(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run it and watch it fail**
+- [x] **Step 2: Run it and watch it fail**
 
 ```bash
 cd S:/Projects/Avito_Go && go test ./internal/lifecycle/ -run Comparable -v
@@ -1140,7 +1140,7 @@ cd S:/Projects/Avito_Go && go test ./internal/lifecycle/ -run Comparable -v
 
 Expected: FAIL to build — `undefined: Comparable`.
 
-- [ ] **Step 3: Write `compare.go`**
+- [x] **Step 3: Write `compare.go`**
 
 ```go
 // Comparable reports whether this pass may be differenced against the one
@@ -1174,7 +1174,7 @@ func Comparable(p PassFacts) Verdict {
 }
 ```
 
-- [ ] **Step 4: Run the tests and watch them pass**
+- [x] **Step 4: Run the tests and watch them pass**
 
 ```bash
 cd S:/Projects/Avito_Go && gofmt -w ./internal && go test ./internal/lifecycle/ -v 2>&1 | grep -E "^(---|ok|FAIL)"
@@ -1182,7 +1182,7 @@ cd S:/Projects/Avito_Go && gofmt -w ./internal && go test ./internal/lifecycle/ 
 
 Expected: every test PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd S:/Projects/Avito_Go && git add internal/lifecycle/ && git commit -m "$(cat <<'MSG'
@@ -1251,7 +1251,7 @@ type Absence struct {
 func Explain(in AbsenceInput) Absence
 ```
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```go
 // SPDX-License-Identifier: AGPL-3.0-or-later
@@ -1364,7 +1364,7 @@ func TestDisplacementNeverConfirms(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run it and watch it fail**
+- [x] **Step 2: Run it and watch it fail**
 
 ```bash
 cd S:/Projects/Avito_Go && go test ./internal/lifecycle/ -run 'Absence|Displac|Gates|Window' -v
@@ -1372,7 +1372,7 @@ cd S:/Projects/Avito_Go && go test ./internal/lifecycle/ -run 'Absence|Displac|G
 
 Expected: FAIL to build.
 
-- [ ] **Step 3: Write `absence.go`**
+- [x] **Step 3: Write `absence.go`**
 
 ```go
 // Explain says why a listing is not in this pass, and whether that is
@@ -1398,7 +1398,7 @@ func Explain(in AbsenceInput) Absence {
 }
 ```
 
-- [ ] **Step 4: Run the tests and watch them pass**
+- [x] **Step 4: Run the tests and watch them pass**
 
 ```bash
 cd S:/Projects/Avito_Go && gofmt -w ./internal && go test ./internal/lifecycle/ -v 2>&1 | grep -E "^(---|ok|FAIL|    )"
@@ -1406,7 +1406,7 @@ cd S:/Projects/Avito_Go && gofmt -w ./internal && go test ./internal/lifecycle/ 
 
 Expected: every test and subtest PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd S:/Projects/Avito_Go && git add internal/lifecycle/ && git commit -m "$(cat <<'MSG'
@@ -1452,7 +1452,7 @@ MSG
 - Consumes: `lifecycle.PassFacts`, `lifecycle.Admissible`, `lifecycle.Comparable`.
 - Produces: `func (s *Store) passFacts(ctx, tx, p Pass) (lifecycle.PassFacts, error)`; `Pass` gains `Degraded bool` and loses nothing.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 The test writes a sequence of passes and asserts the stored column, because the
 value is what every later query reads:
@@ -1487,7 +1487,7 @@ Plus one that the stored `degraded_why` carries the refusal's reason, and one
 that an identity change stores `evidential = 1` but suppresses departures — the
 distinction Task 4 exists for.
 
-- [ ] **Step 2: Run it and watch it fail**
+- [x] **Step 2: Run it and watch it fail**
 
 ```bash
 cd S:/Projects/Avito_Go && go test ./internal/store/ -run Evidential -v
@@ -1495,7 +1495,7 @@ cd S:/Projects/Avito_Go && go test ./internal/store/ -run Evidential -v
 
 Expected: FAIL — the caller's value is stored as given.
 
-- [ ] **Step 3: Compute it inside the transaction**
+- [x] **Step 3: Compute it inside the transaction**
 
 `savePassTx` reads the watch's previous pass — its session, its evidential
 timestamp and its `last_total_count` — builds a `lifecycle.PassFacts`, and
@@ -1504,7 +1504,7 @@ stores `Admissible(...)`'s verdict in `evidential` and its `Why` in
 in Task 7 rather than stored: it is a property of a *pair*, and a column on one
 row would be answering a question about two.
 
-- [ ] **Step 4: Run the tests and watch them pass**
+- [x] **Step 4: Run the tests and watch them pass**
 
 ```bash
 cd S:/Projects/Avito_Go && gofmt -w . && go test ./internal/store/ -v 2>&1 | grep -E "^(---|ok|FAIL)"
@@ -1512,7 +1512,7 @@ cd S:/Projects/Avito_Go && gofmt -w . && go test ./internal/store/ -v 2>&1 | gre
 
 Expected: every test PASS, including increment 3's — `TestANonEvidentialPassNeverAdvancesAnAbsenceCounter` now exercises the real rule rather than a caller's assertion.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd S:/Projects/Avito_Go && git add internal/store/ cmd/avitomon/ && git commit -m "$(cat <<'MSG'
@@ -1578,7 +1578,7 @@ func (s *Store) Changes(ctx context.Context, watchID, since int64, limit int) ([
 func insertChange(ctx context.Context, tx *sql.Tx, c ChangeRow) error
 ```
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `internal/store/window_test.go`. Every case is a rule from the spec or a
 measurement, and the name says which:
@@ -1864,7 +1864,7 @@ func TestAnIdentityChangeProducesArrivalsButNoDepartures(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run it and watch it fail**
+- [x] **Step 2: Run it and watch it fail**
 
 ```bash
 cd S:/Projects/Avito_Go && go test ./internal/store/ -run 'Seeding|PushedOff|Vanished|DroppedState|FloatedBack|IdentityChange' -v
@@ -1872,7 +1872,7 @@ cd S:/Projects/Avito_Go && go test ./internal/store/ -run 'Seeding|PushedOff|Van
 
 Expected: FAIL to build — `undefined: ChangeRow`.
 
-- [ ] **Step 3: Write `changes.go`**
+- [x] **Step 3: Write `changes.go`**
 
 ```go
 // SPDX-License-Identifier: AGPL-3.0-or-later
@@ -1958,7 +1958,7 @@ func (s *Store) Changes(ctx context.Context, watchID, since int64, limit int) ([
 }
 ```
 
-- [ ] **Step 4: Write `window.go`**
+- [x] **Step 4: Write `window.go`**
 
 ```go
 // SPDX-License-Identifier: AGPL-3.0-or-later
@@ -2058,14 +2058,14 @@ for each, writes `displaced` back to the member row, and emits
 `state_at` only for the confirmed case, and only with `state_source = 'search'`
 — the column exists so that a window conclusion can never write `closed`.
 
-- [ ] **Step 5: Call it from `savePassTx`**
+- [x] **Step 5: Call it from `savePassTx`**
 
 After `updateMembers`, and inside the same transaction. `savePassTx` already
 holds `previous`, `out.Arrivals` and `passID`; it needs the `Watch` row and the
 `lifecycle.PassFacts` Task 6 built, both of which it can read in the same
 transaction.
 
-- [ ] **Step 6: Run the tests and watch them pass**
+- [x] **Step 6: Run the tests and watch them pass**
 
 ```bash
 cd S:/Projects/Avito_Go && gofmt -w ./internal && go test ./internal/store/ -v 2>&1 | grep -E "^(---|ok|FAIL|    )"
@@ -2073,7 +2073,7 @@ cd S:/Projects/Avito_Go && gofmt -w ./internal && go test ./internal/store/ -v 2
 
 Expected: every test PASS, increment 3's included.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 cd S:/Projects/Avito_Go && git add internal/store/ && git commit -m "$(cat <<'MSG'
@@ -2115,7 +2115,7 @@ MSG
 - Consumes: `track.Reading`, `track.Diff`.
 - Produces: `func (s *Store) ProduceSeries(ctx context.Context) (int, error)`; `func (s *Store) Saturation(ctx context.Context, watchID int64, passes int) (float64, bool, error)`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```go
 // SPDX-License-Identifier: AGPL-3.0-or-later
@@ -2275,7 +2275,7 @@ func TestSaturationRefusesToAnswerWithoutEnoughPasses(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run it and watch it fail**
+- [x] **Step 2: Run it and watch it fail**
 
 ```bash
 cd S:/Projects/Avito_Go && go test ./internal/store/ -run 'Series|Saturation' -v
@@ -2283,7 +2283,7 @@ cd S:/Projects/Avito_Go && go test ./internal/store/ -run 'Series|Saturation' -v
 
 Expected: FAIL to build — `undefined: ProduceSeries`.
 
-- [ ] **Step 3: Write `series.go`**
+- [x] **Step 3: Write `series.go`**
 
 The producer walks `listing_snapshots` in id order from a watermark, groups
 consecutive rows by `(item_id, surface)`, builds a `track.Reading` from each and
@@ -2311,7 +2311,7 @@ func (s *Store) ProduceSeries(ctx context.Context) (int, error) { ... }
 `Saturation` is `sum(items_seen) / sum(arrivals)` over the last N passes of a
 watch, and returns `ok == false` when fewer than N admissible passes exist.
 
-- [ ] **Step 4: Run the tests and watch them pass**
+- [x] **Step 4: Run the tests and watch them pass**
 
 ```bash
 cd S:/Projects/Avito_Go && gofmt -w ./internal && go test ./internal/store/ -v 2>&1 | grep -E "^(---|ok|FAIL)"
@@ -2319,7 +2319,7 @@ cd S:/Projects/Avito_Go && gofmt -w ./internal && go test ./internal/store/ -v 2
 
 Expected: every test PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd S:/Projects/Avito_Go && git add internal/store/ && git commit -m "$(cat <<'MSG'
@@ -2358,7 +2358,7 @@ MSG
 **Interfaces:**
 - Consumes: `store.Changes`, `store.ProduceSeries`.
 
-- [ ] **Step 1: Write `changes.go`**
+- [x] **Step 1: Write `changes.go`**
 
 ```go
 // SPDX-License-Identifier: AGPL-3.0-or-later
@@ -2434,7 +2434,7 @@ func dash(s string) string {
 Add `case "changes": err = changesCmd(os.Args[2:])` to the router and a line to
 `usage()`.
 
-- [ ] **Step 2: Run the scripted sequence**
+- [x] **Step 2: Run the scripted sequence**
 
 ```bash
 cd S:/Projects/Avito_Go && go build ./... && go vet ./... && \
@@ -2444,7 +2444,7 @@ cd S:/Projects/Avito_Go && go build ./... && go vet ./... && \
 Expected: every test PASS. This is the increment's first demonstrable — *a
 scripted sequence of fixture pages produces exactly the right `changes` rows*.
 
-- [ ] **Step 3: Run it against the live site, twice, and read the output**
+- [x] **Step 3: Run it against the live site, twice, and read the output**
 
 ```bash
 cd S:/Projects/Avito_Go && D=/tmp/inc4.db && rm -f "$D"* && \
@@ -2472,7 +2472,7 @@ seen from the other side — as changes rather than as row counts — and if
 anything appears here, either the identity did not persist or the window
 producer is differencing something it should not.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 cd S:/Projects/Avito_Go && git add cmd/avitomon/ && git commit -m "$(cat <<'MSG'
