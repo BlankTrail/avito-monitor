@@ -30,6 +30,11 @@ type Event struct {
 	ThreadID int64
 	SellerID int64
 
+	// RepostOf is the listing this one succeeded, when the thread it joined
+	// already had a member. Set, an appearance is the same advertisement posted
+	// again rather than a new find — see isRepost, which is the only reader.
+	RepostOf *int64
+
 	// Position is where the listing stood in the results, when that is known.
 	// A pointer because most changes do not come from a window pass at all,
 	// and a zero would read as "first" — the single most misleading value this
