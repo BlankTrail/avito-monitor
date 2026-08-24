@@ -112,7 +112,7 @@ func runOnce(ctx context.Context, s *store.Store, f *transport.Fetcher, w store.
 		Path: string(res.Page.Report.Path), Mode: string(f.Mode()),
 		Session: res.Session, Egress: res.Egress,
 		ElapsedMS: (finished - started) * 1000,
-		Bytes:     int64(len(res.Body)),
+		Bytes:     int64(res.Bytes),
 		// Evidential is deliberately not set. Increment 3 passed a floor in by
 		// hand — a class that answered — with a note saying the real tests
 		// were increment 4's. They are, they live in internal/lifecycle, and

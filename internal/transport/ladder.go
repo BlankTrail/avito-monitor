@@ -112,6 +112,13 @@ type Result struct {
 	// Body is kept only for a verdict worth reading later — a shape change or
 	// a mangled body. Keeping every body would be an archive nobody asked for.
 	Body []byte
+	// Bytes is how large the reply was, whether or not Body was kept.
+	//
+	// Separate from len(Body) precisely because Body is dropped on success:
+	// passes.bytes exists to say what a pass cost, and reading it off a field
+	// that is empty for every successful pass made the column report zero for
+	// the only case it was about.
+	Bytes int
 	// Trace is one entry per attempt, in order. It exists because Verdict is
 	// the FINAL verdict: a fetch that met a soft block, renewed its identity
 	// and then succeeded reports ClassOK, and the block leaves no other mark
@@ -202,7 +209,7 @@ func (f *Fetcher) Fetch(ctx context.Context, target string) (Result, error) {
 		res.Session, res.Label, res.Egress = lease.Session(), lease.Label(), lease.Egress()
 
 		status, body, doErr := f.once(ctx, lease, target)
-		res.Status = status
+		res.Status, res.Bytes = status, len(body)
 		if doErr != nil {
 			// A transport error is not a verdict about the target. One re-dial,
 			// then give up: a connection that will not open twice is not going
