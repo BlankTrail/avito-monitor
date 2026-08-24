@@ -5,6 +5,8 @@ package telegram
 import (
 	"fmt"
 	"strings"
+
+	"github.com/BlankTrail/avito-monitor/internal/ru"
 )
 
 // Line is one thing that happened, for a summary that covers many.
@@ -79,21 +81,6 @@ func one(l Line) string {
 // the teens are all the many-form, and it is the last digit that decides
 // otherwise.
 func changeCount(n int) string {
-	return fmt.Sprintf("%d %s", n, plural(n, "изменение", "изменения", "изменений"))
-}
-
-func plural(n int, one, few, many string) string {
-	if n < 0 {
-		n = -n
-	}
-	if n%100 >= 11 && n%100 <= 14 {
-		return many
-	}
-	switch n % 10 {
-	case 1:
-		return one
-	case 2, 3, 4:
-		return few
-	}
-	return many
+	return fmt.Sprintf("%d %s", n,
+		ru.Plural(n, "изменение", "изменения", "изменений"))
 }
