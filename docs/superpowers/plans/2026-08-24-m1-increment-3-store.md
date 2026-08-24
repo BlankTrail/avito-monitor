@@ -55,7 +55,7 @@
 **Interfaces:**
 - Produces: `type Store struct{}`; `func Open(ctx context.Context, path string) (*Store, error)`; `func (s *Store) Close() error`; `func (s *Store) DB() *sql.DB`; `var ErrClosed error`.
 
-- [ ] **Step 1: Take the dependency**
+- [x] **Step 1: Take the dependency**
 
 ```bash
 cd S:/Projects/Avito_Go && go get modernc.org/sqlite@latest && go mod tidy
@@ -63,7 +63,7 @@ cd S:/Projects/Avito_Go && go get modernc.org/sqlite@latest && go mod tidy
 
 Expected: `modernc.org/sqlite` appears in `go.mod`'s first require block. It brings indirect modules; that is known and is the price of no CGO.
 
-- [ ] **Step 2: Write the failing test for Open and the pragmas**
+- [x] **Step 2: Write the failing test for Open and the pragmas**
 
 Create `internal/store/store_test.go`:
 
@@ -145,7 +145,7 @@ func openTemp(t *testing.T) *Store {
 }
 ```
 
-- [ ] **Step 3: Run it and watch it fail**
+- [x] **Step 3: Run it and watch it fail**
 
 ```bash
 cd S:/Projects/Avito_Go && go test ./internal/store/ -run TestOpen -v
@@ -153,7 +153,7 @@ cd S:/Projects/Avito_Go && go test ./internal/store/ -run TestOpen -v
 
 Expected: FAIL to build — `undefined: Open`.
 
-- [ ] **Step 4: Lift the migration runner**
+- [x] **Step 4: Lift the migration runner**
 
 Copy `S:\Projects\WB_GO\internal\store\migrate.go` to `internal/store/migrate.go` verbatim, then make exactly these changes and no others:
 
@@ -168,27 +168,33 @@ Copy `S:\Projects\WB_GO\internal\store\migrate.go` to `internal/store/migrate.go
 // by its checksum instead of being believed.
 ```
 
-- [ ] **Step 5: Write the migration**
+- [x] **Step 5: Write the migration**
 
 Create `internal/store/migrations/0001_avito.sql`. Its content is the spec's §Schema — migration 0001, lines 611 to 1433, **copied verbatim**, comments included. Do not retype it and do not summarise it:
+
+The schema is **not** in a fenced code block. It is raw text between the heading
+and the `---` that closes the section, so looking for a fence finds the one
+belonging to §Packages and extracts thirty-two lines of nothing. Anchor on the
+SPDX line that opens the SQL and on the section rule that ends it:
 
 ```bash
 cd S:/Projects/Avito_Go && python - <<'PY'
 import io
-spec = io.open('docs/superpowers/specs/2026-08-23-avito-monitor-m1-design.md', encoding='utf-8').read().split('\n')
-# The schema is the fenced sql block under "# Schema — migration 0001".
-start = next(i for i, l in enumerate(spec) if l.startswith('# Schema'))
-begin = next(i for i in range(start, len(spec)) if spec[i].startswith('```'))
-end = next(i for i in range(begin + 1, len(spec)) if spec[i].startswith('```'))
-body = '\n'.join(spec[begin + 1:end])
-io.open('internal/store/migrations/0001_avito.sql', 'w', encoding='utf-8', newline='\n').write(body + '\n')
-print('wrote', len(body.split('\n')), 'lines,', body.count('CREATE TABLE'), 'tables')
+lines = io.open('docs/superpowers/specs/2026-08-23-avito-monitor-m1-design.md', encoding='utf-8').read().split('\n')
+start = next(i for i, l in enumerate(lines) if l.startswith('# Schema'))
+begin = next(i for i in range(start, len(lines)) if lines[i].startswith('-- SPDX'))
+end   = next(i for i in range(begin, len(lines)) if lines[i].strip() == '---')
+body = '\n'.join(lines[begin:end]).rstrip() + '\n'
+io.open('internal/store/migrations/0001_avito.sql', 'w', encoding='utf-8', newline='\n').write(body)
+print('lines', body.count('\n'), '| tables', body.count('CREATE TABLE'), '| indexes', body.count('CREATE INDEX'))
 PY
 ```
 
-Expected: 21 tables. If the count differs, stop — the extraction picked up the wrong block, and a partial schema is worse than none.
+Expected: **818 lines, 21 tables, 23 indexes.** If any of the three differs,
+stop — the extraction took the wrong range, and a partial schema is worse than
+none.
 
-- [ ] **Step 6: Write `store.go`**
+- [x] **Step 6: Write `store.go`**
 
 ```go
 // SPDX-License-Identifier: AGPL-3.0-or-later
@@ -279,7 +285,7 @@ func (s *Store) Close() error {
 
 Adjust `migrate`'s signature to whatever WB_GO's copy expects; if its is `migrate(ctx, db)` with a package-level `migrationFS`, call it that way and delete the third argument here.
 
-- [ ] **Step 7: Run the tests and watch them pass**
+- [x] **Step 7: Run the tests and watch them pass**
 
 ```bash
 cd S:/Projects/Avito_Go && gofmt -w ./internal && go build ./... && go test ./internal/store/ -run TestOpen -v
@@ -287,7 +293,7 @@ cd S:/Projects/Avito_Go && gofmt -w ./internal && go build ./... && go test ./in
 
 Expected: both PASS.
 
-- [ ] **Step 8: Write the schema invariant tests**
+- [x] **Step 8: Write the schema invariant tests**
 
 These prove the *applied* schema rather than the file, so a bad copy is caught. Create `internal/store/schema_test.go`:
 
@@ -407,7 +413,7 @@ func TestPriceKindIsThreeValuedEverywhereItAppears(t *testing.T) {
 }
 ```
 
-- [ ] **Step 9: Run them and fix whatever the copy got wrong**
+- [x] **Step 9: Run them and fix whatever the copy got wrong**
 
 ```bash
 cd S:/Projects/Avito_Go && go test ./internal/store/ -v 2>&1 | grep -E "^(---|ok|FAIL|    )"
@@ -415,7 +421,7 @@ cd S:/Projects/Avito_Go && go test ./internal/store/ -v 2>&1 | grep -E "^(---|ok
 
 Expected: all PASS. If `TestEveryTableIsStrict` reports a count other than 21, the extraction in step 5 took the wrong block — fix that rather than the test.
 
-- [ ] **Step 10: Commit**
+- [x] **Step 10: Commit**
 
 ```bash
 cd S:/Projects/Avito_Go && git add go.mod go.sum internal/store/ && git commit -m "$(cat <<'MSG'
@@ -453,7 +459,7 @@ Decision 3 forbids a transport default, and increments 3, 4 and 5 all collect be
 - Consumes: `Store` from Task 1.
 - Produces: `func (s *Store) Setting(ctx context.Context, key string) (string, bool, error)`; `func (s *Store) SetSetting(ctx context.Context, key, value string) error`; `func (s *Store) TransportMode(ctx context.Context) (transport.Mode, error)`; `func (s *Store) SetTransportMode(ctx context.Context, m transport.Mode) error`; `var ErrNoTransportChosen error`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `internal/store/settings_test.go`:
 
@@ -531,7 +537,7 @@ func TestSettingRoundTrips(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run it and watch it fail**
+- [x] **Step 2: Run it and watch it fail**
 
 ```bash
 cd S:/Projects/Avito_Go && go test ./internal/store/ -run 'Transport|Setting' -v
@@ -539,7 +545,7 @@ cd S:/Projects/Avito_Go && go test ./internal/store/ -run 'Transport|Setting' -v
 
 Expected: FAIL to build — `undefined: ErrNoTransportChosen`.
 
-- [ ] **Step 3: Write `settings.go`**
+- [x] **Step 3: Write `settings.go`**
 
 ```go
 // SPDX-License-Identifier: AGPL-3.0-or-later
@@ -616,7 +622,7 @@ func (s *Store) SetTransportMode(ctx context.Context, m transport.Mode) error {
 
 If `settings` in migration 0001 does not have `key` as its primary key, read the spec's DDL at line 1405 and match the real column names rather than changing the migration.
 
-- [ ] **Step 4: Run the tests and watch them pass**
+- [x] **Step 4: Run the tests and watch them pass**
 
 ```bash
 cd S:/Projects/Avito_Go && gofmt -w ./internal && go test ./internal/store/ -run 'Transport|Setting' -v
@@ -624,7 +630,7 @@ cd S:/Projects/Avito_Go && gofmt -w ./internal && go test ./internal/store/ -run
 
 Expected: four PASS.
 
-- [ ] **Step 5: Add the `transport set` and `volume` subcommands**
+- [x] **Step 5: Add the `transport set` and `volume` subcommands**
 
 Create `cmd/avitomon/admin.go`:
 
@@ -693,9 +699,16 @@ func volumeCmd(args []string) error {
 }
 ```
 
-`volumeCmd` will not compile until Task 6. Write it now anyway and add `volume` to the router in the same step, so the router is touched once; Task 6's step 1 test is what makes it build.
+**Write only `transportCmd` here.** An earlier draft of this plan put
+`volumeCmd` in this step too, to touch the router once — but `Store.Volume` does
+not exist until Task 6, so this task's commit would not have built. Touching the
+router twice costs two lines; a commit that does not build costs a bisect. Both
+`volumeCmd` and its router entry belong to Task 6.
 
-- [ ] **Step 6: Route the subcommands**
+`transportCmd` also gets a `show` subcommand, because a setting that can only be
+written is one nobody can check before a run.
+
+- [x] **Step 6: Route the subcommands**
 
 In `cmd/avitomon/main.go`, replace the current `os.Args[1] != "fetch"` check with a switch:
 
@@ -748,7 +761,7 @@ func usage() {
 
 Move the existing halt-printing block out of the old `main` and into this one unchanged — it is increment 2's boundary message and its wording was measured.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 cd S:/Projects/Avito_Go && git add internal/store/settings.go internal/store/settings_test.go cmd/avitomon/ && git commit -m "$(cat <<'MSG'
@@ -811,7 +824,7 @@ func (s *Store) DueWatches(ctx context.Context, now int64, limit int) ([]Watch, 
 func (s *Store) MarkHalted(ctx context.Context, id int64, reason string, at int64) error
 ```
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `internal/store/watches_test.go`:
 
@@ -944,7 +957,7 @@ func TestAHaltedWatchIsNeverDue(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run it and watch it fail**
+- [x] **Step 2: Run it and watch it fail**
 
 ```bash
 cd S:/Projects/Avito_Go && go test ./internal/store/ -run Watch -v
@@ -952,7 +965,7 @@ cd S:/Projects/Avito_Go && go test ./internal/store/ -run Watch -v
 
 Expected: FAIL to build — `undefined: Watch`.
 
-- [ ] **Step 3: Write `watches.go`**
+- [x] **Step 3: Write `watches.go`**
 
 ```go
 // SPDX-License-Identifier: AGPL-3.0-or-later
@@ -1084,7 +1097,7 @@ func (s *Store) MarkHalted(ctx context.Context, id int64, reason string, at int6
 }
 ```
 
-- [ ] **Step 4: Run the tests and watch them pass**
+- [x] **Step 4: Run the tests and watch them pass**
 
 ```bash
 cd S:/Projects/Avito_Go && gofmt -w ./internal && go test ./internal/store/ -run Watch -v 2>&1 | grep -E "^(---|ok|FAIL|    )"
@@ -1092,7 +1105,7 @@ cd S:/Projects/Avito_Go && gofmt -w ./internal && go test ./internal/store/ -run
 
 Expected: five PASS. `TestMaxPagesIsRefusedAboveTwo` and `TestIntervalIsRefusedBelowTwoMinutes` pass because the CHECK constraints in migration 0001 do the refusing — that is the point of them being in the schema.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd S:/Projects/Avito_Go && git add internal/store/watches.go internal/store/watches_test.go && git commit -m "$(cat <<'MSG'
@@ -1128,7 +1141,7 @@ Pure, no database, no clock beyond what is passed in. This is the rule that make
 - Consumes: `avito.Listing` from increment 1.
 - Produces: `func Fingerprint(l avito.Listing) string`; `type Retention struct{...}`; `func DefaultRetention() Retention`; `func AnchorDue(lastTS, now int64, every time.Duration) bool`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `internal/store/fingerprint_test.go`:
 
@@ -1254,7 +1267,7 @@ func TestDefaultRetentionIsTheThresholdsTheSpecNames(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run it and watch it fail**
+- [x] **Step 2: Run it and watch it fail**
 
 ```bash
 cd S:/Projects/Avito_Go && go test ./internal/store/ -run 'Fingerprint|Anchor|Retention' -v
@@ -1262,7 +1275,7 @@ cd S:/Projects/Avito_Go && go test ./internal/store/ -run 'Fingerprint|Anchor|Re
 
 Expected: FAIL to build — `undefined: Fingerprint`.
 
-- [ ] **Step 3: Write `fingerprint.go`**
+- [x] **Step 3: Write `fingerprint.go`**
 
 ```go
 // SPDX-License-Identifier: AGPL-3.0-or-later
@@ -1367,7 +1380,7 @@ func AnchorDue(lastTS, now int64, every time.Duration) bool {
 }
 ```
 
-- [ ] **Step 4: Run the tests and watch them pass**
+- [x] **Step 4: Run the tests and watch them pass**
 
 ```bash
 cd S:/Projects/Avito_Go && gofmt -w ./internal && go test ./internal/store/ -run 'Fingerprint|Anchor|Retention' -v 2>&1 | grep -E "^(---|ok|FAIL|    )"
@@ -1375,7 +1388,7 @@ cd S:/Projects/Avito_Go && gofmt -w ./internal && go test ./internal/store/ -run
 
 Expected: every subtest PASS. If `avito.Listing`'s field names differ, read `avito/model.go` and use the real ones — do not add fields to `avito`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd S:/Projects/Avito_Go && git add internal/store/fingerprint.go internal/store/fingerprint_test.go && git commit -m "$(cat <<'MSG'
@@ -1443,7 +1456,7 @@ type SaveResult struct {
 func (s *Store) SavePass(ctx context.Context, p Pass, listings []avito.Listing) (SaveResult, error)
 ```
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `internal/store/pass_test.go`:
 
@@ -1670,7 +1683,7 @@ func TestAnAnchorRowIsWrittenWhenOneIsDue(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run it and watch it fail**
+- [x] **Step 2: Run it and watch it fail**
 
 ```bash
 cd S:/Projects/Avito_Go && go test ./internal/store/ -run 'SavePass|Snapshot|WatchMembers|Anchor' -v
@@ -1678,7 +1691,7 @@ cd S:/Projects/Avito_Go && go test ./internal/store/ -run 'SavePass|Snapshot|Wat
 
 Expected: FAIL to build — `undefined: Pass`.
 
-- [ ] **Step 3: Write `pass.go`**
+- [x] **Step 3: Write `pass.go`**
 
 ```go
 // SPDX-License-Identifier: AGPL-3.0-or-later
@@ -1971,7 +1984,7 @@ Add `"errors"` and `"strings"` to the imports. Add a `retention()` accessor on `
 
 If `listings` in migration 0001 has no `first_seen_at`/`last_seen_at`, read the spec's DDL from line 725 and use the real column names.
 
-- [ ] **Step 4: Run the tests and watch them pass**
+- [x] **Step 4: Run the tests and watch them pass**
 
 ```bash
 cd S:/Projects/Avito_Go && gofmt -w ./internal && go test ./internal/store/ -v 2>&1 | grep -E "^(---|ok|FAIL|    )"
@@ -1979,7 +1992,7 @@ cd S:/Projects/Avito_Go && gofmt -w ./internal && go test ./internal/store/ -v 2
 
 Expected: every test PASS. `TestSavePassIsAtomic` is the one to watch: if it fails, the transaction is not covering everything and the increment's central claim is untrue.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd S:/Projects/Avito_Go && git add internal/store/pass.go internal/store/pass_test.go && git commit -m "$(cat <<'MSG'
@@ -2013,7 +2026,7 @@ MSG
 **Interfaces:**
 - Produces: `type Volume struct { Bytes int64; Rows map[string]int64 }`; `func (v Volume) String() string`; `func (s *Store) Volume(ctx context.Context) (Volume, error)`; `func (s *Store) CheckSpace(ctx context.Context) error`; `var ErrDiskLow error`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `internal/store/volume_test.go`:
 
@@ -2079,7 +2092,7 @@ func TestCheckSpaceRefusesBelowTheFloor(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run it and watch it fail**
+- [x] **Step 2: Run it and watch it fail**
 
 ```bash
 cd S:/Projects/Avito_Go && go test ./internal/store/ -run 'Volume|CheckSpace' -v
@@ -2087,7 +2100,7 @@ cd S:/Projects/Avito_Go && go test ./internal/store/ -run 'Volume|CheckSpace' -v
 
 Expected: FAIL to build.
 
-- [ ] **Step 3: Write `volume.go`**
+- [x] **Step 3: Write `volume.go`**
 
 Lift `Volume` from `S:\Projects\WB_GO\internal\store\vacuum.go` — read it first and keep its shape, its comment and its table-listing query. Then add the free-space half, which WB_GO does not have:
 
@@ -2179,7 +2192,7 @@ func diskFree(path string) (free, total int64, err error) {
 
 `golang.org/x/sys` is already an indirect dependency and the spec budgets it as direct. Add `Store.path` (set in `Open`), `Store.floor atomic.Int64`, `SetSpaceFloor(int64)` and `spaceFloor() int64` returning `spaceFloorBytes` when unset.
 
-- [ ] **Step 4: Run the tests and watch them pass**
+- [x] **Step 4: Run the tests and watch them pass**
 
 ```bash
 cd S:/Projects/Avito_Go && go get golang.org/x/sys && gofmt -w ./internal && go build ./... && go test ./internal/store/ -run 'Volume|CheckSpace' -v
@@ -2187,7 +2200,7 @@ cd S:/Projects/Avito_Go && go get golang.org/x/sys && gofmt -w ./internal && go 
 
 Expected: both PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd S:/Projects/Avito_Go && git add go.mod go.sum internal/store/ && git commit -m "$(cat <<'MSG'
@@ -2220,7 +2233,7 @@ MSG
 **Interfaces:**
 - Produces: `func (s *Store) SetRetention(r Retention)`; `func (s *Store) ThinSnapshots(ctx context.Context, now int64) (int64, error)`; `func (s *Store) ThinPasses(ctx context.Context, now int64) (int64, error)`; `func (s *Store) SweepBodies(ctx context.Context, now int64) (int64, error)`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `internal/store/retention_test.go`:
 
@@ -2500,7 +2513,7 @@ Add `"strconv"` to the file's imports. If `bodies` in migration 0001 names its
 columns differently, read the spec's DDL at line 1224 and match the real ones
 rather than changing the migration.
 
-- [ ] **Step 2: Run it and watch it fail**
+- [x] **Step 2: Run it and watch it fail**
 
 ```bash
 cd S:/Projects/Avito_Go && go test ./internal/store/ -run 'Thin|Sweep|Body' -v
@@ -2508,7 +2521,7 @@ cd S:/Projects/Avito_Go && go test ./internal/store/ -run 'Thin|Sweep|Body' -v
 
 Expected: FAIL to build.
 
-- [ ] **Step 3: Write `retention.go`**
+- [x] **Step 3: Write `retention.go`**
 
 `thinSnapshotsSQL` is lifted from `S:\Projects\WB_GO\internal\store\retention.go` with `(nm_id, dest, app_type)` substituted for `(item_id, surface)` and `snapshots` for `listing_snapshots`. Copy its long comment too — the `ORDER BY anchor ASC, ts DESC, id DESC` explanation is the rule, and a reader who does not have it will "simplify" the ordering.
 
@@ -2547,7 +2560,7 @@ WHERE id IN (
 
 `SweepBodies` runs the age rule first and the size rule second, deleting oldest-first until the archive is under `BodyMaxBytes`. Both bounds are read from `Retention`; neither may be zero — if either is, use `DefaultRetention()`'s value and say so in a comment rather than treating zero as "unbounded".
 
-- [ ] **Step 4: Run the tests and watch them pass**
+- [x] **Step 4: Run the tests and watch them pass**
 
 ```bash
 cd S:/Projects/Avito_Go && gofmt -w ./internal && go test ./internal/store/ -v 2>&1 | grep -E "^(---|ok|FAIL|    )"
@@ -2555,7 +2568,7 @@ cd S:/Projects/Avito_Go && gofmt -w ./internal && go test ./internal/store/ -v 2
 
 Expected: every test PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd S:/Projects/Avito_Go && git add internal/store/retention.go internal/store/retention_test.go && git commit -m "$(cat <<'MSG'
@@ -2598,7 +2611,7 @@ MSG
 **Interfaces:**
 - Produces: `type ReclaimReport struct { Freed int64; ReachedFailedPasses bool; Steps []string }`; `func (s *Store) Reclaim(ctx context.Context, now, target int64) (ReclaimReport, error)`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 ```go
 // SPDX-License-Identifier: AGPL-3.0-or-later
@@ -2673,7 +2686,7 @@ func TestReclaimStopsAtTheFirstStepThatReachesTheTarget(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run it and watch it fail**
+- [x] **Step 2: Run it and watch it fail**
 
 ```bash
 cd S:/Projects/Avito_Go && go test ./internal/store/ -run Reclaim -v
@@ -2681,7 +2694,7 @@ cd S:/Projects/Avito_Go && go test ./internal/store/ -run Reclaim -v
 
 Expected: FAIL to build.
 
-- [ ] **Step 3: Implement `Reclaim`**
+- [x] **Step 3: Implement `Reclaim`**
 
 ```go
 // ReclaimReport says what was done and, in one field, the thing a person needs
@@ -2744,7 +2757,7 @@ func (s *Store) Reclaim(ctx context.Context, now, target int64) (ReclaimReport, 
 
 Note what this does **not** do: it stops short of deleting failed passes and reports that it had to. Deleting them is a person's decision, taken in the panel in increment 6, and the flag is what puts the question in front of them.
 
-- [ ] **Step 4: Run the tests and watch them pass**
+- [x] **Step 4: Run the tests and watch them pass**
 
 ```bash
 cd S:/Projects/Avito_Go && gofmt -w ./internal && go test ./internal/store/ -v 2>&1 | grep -E "^(---|ok|FAIL|    )"
@@ -2752,7 +2765,7 @@ cd S:/Projects/Avito_Go && gofmt -w ./internal && go test ./internal/store/ -v 2
 
 Expected: every test PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd S:/Projects/Avito_Go && git add internal/store/ && git commit -m "$(cat <<'MSG'
@@ -2792,7 +2805,7 @@ MSG
 - Consumes: everything above, plus `transport.NewFetcher`, `bt.Open`, `direct.Open` from increment 2.
 - Produces: the binary, and the increment's demonstrable behaviour.
 
-- [ ] **Step 1: Write `watch.go`**
+- [x] **Step 1: Write `watch.go`**
 
 The URL is stored verbatim. Parsing it into `query`, `category_id` and the rest
 is increment 4's `avito.SearchURL`, which does not exist yet, and inventing half
@@ -2856,7 +2869,7 @@ func watchCmd(args []string) error {
 }
 ```
 
-- [ ] **Step 2: Write `run.go`**
+- [x] **Step 2: Write `run.go`**
 
 `avitomon run --once [-db FILE] [-key K] [-control URL] [-proxies FILE]` does exactly one thing: read the transport mode from `settings`, open that Leaser, take `DueWatches(now, 1)`, fetch, and `SavePass`. It must:
 
@@ -2920,7 +2933,7 @@ Three small additions this needs, each one line:
 res.Session, res.Label, res.Egress = lease.Session(), lease.Label(), lease.Egress()
 ```
 
-- [ ] **Step 3: Build and run the increment's demonstrable behaviour**
+- [x] **Step 3: Build and run the increment's demonstrable behaviour**
 
 ```bash
 cd S:/Projects/Avito_Go && go build ./... && \
@@ -2945,7 +2958,7 @@ cd S:/Projects/Avito_Go && go run ./cmd/avitomon transport set -db /tmp/demo.db 
 
 Expected: one pass written, and `volume` printing the file size with `passes 1`, `pass_items ~28`, `listings ~28`, `listing_snapshots ~28`, `watch_members ~28`.
 
-- [ ] **Step 4: Prove retention against a synthetic year**
+- [x] **Step 4: Prove retention against a synthetic year**
 
 ```bash
 cd S:/Projects/Avito_Go && go test ./internal/store/ -run 'Thin|Reclaim|Sweep' -v 2>&1 | grep -E "^(---|ok|FAIL)"
@@ -2953,7 +2966,7 @@ cd S:/Projects/Avito_Go && go test ./internal/store/ -run 'Thin|Reclaim|Sweep' -
 
 Expected: every test PASS. This is the increment's third demonstrable: *running retention against a synthetic year leaves one row per day past thirty days and one per week past a year.*
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd S:/Projects/Avito_Go && git add cmd/avitomon/ internal/store/ internal/transport/ && git commit -m "$(cat <<'MSG'
