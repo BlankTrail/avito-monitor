@@ -29,12 +29,6 @@ func (s *Server) deleteWatch(w http.ResponseWriter, r *http.Request) {
 func (s *Server) toggleWatch(w http.ResponseWriter, r *http.Request) {
 	s.todo(w, r, "Наблюдения")
 }
-func (s *Server) firstRunPage(w http.ResponseWriter, r *http.Request) {
-	s.todo(w, r, "Первый запуск")
-}
-func (s *Server) saveFirstRun(w http.ResponseWriter, r *http.Request) {
-	s.todo(w, r, "Первый запуск")
-}
 func (s *Server) settingsPage(w http.ResponseWriter, r *http.Request) {
 	s.todo(w, r, "Настройки")
 }
