@@ -204,3 +204,73 @@ func (s *Store) checkpoint(ctx context.Context) error {
 	}
 	return nil
 }
+
+// ReclaimReport says what was done and, in one field, the thing a person needs
+// to be told.
+type ReclaimReport struct {
+	Freed               int64
+	ReachedFailedPasses bool
+	Steps               []string
+}
+
+// Reclaim frees space in a fixed order and stops at the first step that reaches
+// its target.
+//
+// The order is the whole design. Archived bodies first, because they are the
+// largest bytes per row and the least irreplaceable. Then thinnable ok and
+// empty passes. Then listing_snapshots past their retention windows. Failed
+// passes are what it reaches last, and it says on the panel when it has had to.
+//
+// The obvious reclaim — an age cut over passes — is wrong twice over. It
+// deletes precisely the failed passes retention keeps for ever, and it deletes
+// them at the worst possible moment, because a disk filling is correlated with
+// collection being broken: a blocked install is what writes both the failure
+// rows and the archived bodies, so the naive sweep destroys the health history
+// exactly when it is the only thing that explains what happened. It also frees
+// almost nothing, since passes.body_sha references bodies and not the reverse,
+// so dropping a pass row orphans its body and leaves the bytes on disk.
+//
+// Every step checkpoints. Under WAL a DELETE writes the freed pages into the
+// log, so a sweep run to shrink the file grows it until the log is truncated.
+func (s *Store) Reclaim(ctx context.Context, now, target int64) (ReclaimReport, error) {
+	var rep ReclaimReport
+	before, err := s.fileBytes(ctx)
+	if err != nil {
+		return rep, err
+	}
+	steps := []struct {
+		name string
+		run  func() (int64, error)
+	}{
+		{"bodies", func() (int64, error) { return s.SweepBodies(ctx, now) }},
+		{"passes", func() (int64, error) { return s.ThinPasses(ctx, now) }},
+		{"snapshots", func() (int64, error) { return s.ThinSnapshots(ctx, now) }},
+	}
+	for _, st := range steps {
+		if _, err := st.run(); err != nil {
+			return rep, err
+		}
+		rep.Steps = append(rep.Steps, st.name)
+
+		s.wmu.Lock()
+		err := s.checkpoint(ctx)
+		s.wmu.Unlock()
+		if err != nil {
+			return rep, err
+		}
+		after, err := s.fileBytes(ctx)
+		if err != nil {
+			return rep, err
+		}
+		rep.Freed = before - after
+		if rep.Freed >= target {
+			return rep, nil
+		}
+	}
+	// Every ordinary step has run and the target is still not met. Say so
+	// rather than deleting the health history quietly: that deletion is a
+	// person's decision, taken in the panel, and this flag is what puts the
+	// question in front of them.
+	rep.ReachedFailedPasses = true
+	return rep, nil
+}
