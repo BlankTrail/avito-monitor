@@ -1,0 +1,17 @@
+-- SPDX-License-Identifier: AGPL-3.0-or-later
+--
+-- The series producer runs out of band on a schedule, so it needs to remember
+-- how far it has read.
+--
+-- A stored number rather than a "which changes have I already written" query
+-- over the changes table: that would scan the busiest table in the schema on
+-- every run, and would still be wrong for a snapshot pair that produced no
+-- change at all — those leave nothing behind to recognise them by, so they
+-- would be re-diffed for ever while the pairs that DID produce something got
+-- written twice.
+--
+-- It lives on settings rather than in a table of its own because settings is
+-- already the one-row table this program keeps its own state in, and a second
+-- key/value table beside it would be two places to look for the same kind of
+-- thing.
+ALTER TABLE settings ADD COLUMN series_watermark INTEGER NOT NULL DEFAULT 0;

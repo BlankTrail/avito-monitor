@@ -4,6 +4,7 @@ package store
 
 import (
 	"context"
+	"io/fs"
 	"path/filepath"
 	"testing"
 )
@@ -54,12 +55,21 @@ func TestOpenIsIdempotent(t *testing.T) {
 	}
 	defer s2.Close()
 
+	// The count must equal the number of embedded migrations and must not have
+	// grown between the two Opens. Asserting a literal number here would fail
+	// every time a migration is added, which is a test that has to be edited to
+	// stay true rather than one that says something.
+	want, err := fs.Glob(migrationFS, "migrations/*.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
 	var n int
 	if err := s2.DB().QueryRow(`SELECT count(*) FROM schema_migrations`).Scan(&n); err != nil {
 		t.Fatal(err)
 	}
-	if n != 1 {
-		t.Errorf("schema_migrations has %d rows after two Opens, want 1", n)
+	if n != len(want) {
+		t.Errorf("schema_migrations has %d rows after two Opens, want %d — one "+
+			"per embedded migration and no more", n, len(want))
 	}
 }
 
