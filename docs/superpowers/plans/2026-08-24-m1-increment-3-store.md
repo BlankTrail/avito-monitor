@@ -699,7 +699,14 @@ func volumeCmd(args []string) error {
 }
 ```
 
-`volumeCmd` will not compile until Task 6. Write it now anyway and add `volume` to the router in the same step, so the router is touched once; Task 6's step 1 test is what makes it build.
+**Write only `transportCmd` here.** An earlier draft of this plan put
+`volumeCmd` in this step too, to touch the router once — but `Store.Volume` does
+not exist until Task 6, so this task's commit would not have built. Touching the
+router twice costs two lines; a commit that does not build costs a bisect. Both
+`volumeCmd` and its router entry belong to Task 6.
+
+`transportCmd` also gets a `show` subcommand, because a setting that can only be
+written is one nobody can check before a run.
 
 - [ ] **Step 6: Route the subcommands**
 

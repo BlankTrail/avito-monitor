@@ -26,11 +26,21 @@ import (
 const keyEnv = "AVITOMON_BLANKTRAIL_KEY"
 
 func main() {
-	if len(os.Args) < 2 || os.Args[1] != "fetch" {
-		fmt.Fprintln(os.Stderr, "usage: avitomon fetch [flags] <url>")
+	if len(os.Args) < 2 {
+		usage()
 		os.Exit(2)
 	}
-	if err := fetchCmd(os.Args[2:]); err != nil {
+	var err error
+	switch os.Args[1] {
+	case "fetch":
+		err = fetchCmd(os.Args[2:])
+	case "transport":
+		err = transportCmd(os.Args[2:])
+	default:
+		usage()
+		os.Exit(2)
+	}
+	if err != nil {
 		var halt *transport.HaltError
 		if errors.As(err, &halt) {
 			fmt.Fprintln(os.Stderr)
@@ -47,6 +57,15 @@ func main() {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
 	}
+}
+
+func usage() {
+	fmt.Fprintln(os.Stderr, "usage:")
+	fmt.Fprintln(os.Stderr, "  avitomon fetch [flags] <url>")
+	fmt.Fprintln(os.Stderr, "  avitomon transport show|set direct|blanktrail")
+	fmt.Fprintln(os.Stderr, "  avitomon watch add [flags] <url>")
+	fmt.Fprintln(os.Stderr, "  avitomon run --once [flags]")
+	fmt.Fprintln(os.Stderr, "  avitomon volume [flags]")
 }
 
 func fetchCmd(args []string) error {
