@@ -17,19 +17,6 @@ func (s *Server) todo(w http.ResponseWriter, r *http.Request, screen string) {
 	})
 }
 
-func (s *Server) settingsPage(w http.ResponseWriter, r *http.Request) {
-	s.todo(w, r, "Настройки")
-}
-func (s *Server) saveSettings(w http.ResponseWriter, r *http.Request) {
-	s.todo(w, r, "Настройки")
-}
-
-func (s *Server) checkBlankTrail(w http.ResponseWriter, r *http.Request) {
-	s.todo(w, r, "Настройки")
-}
-func (s *Server) checkTelegram(w http.ResponseWriter, r *http.Request) {
-	s.todo(w, r, "Настройки")
-}
 func (s *Server) channelsPage(w http.ResponseWriter, r *http.Request)  { s.todo(w, r, "Прокси") }
 func (s *Server) saveChannel(w http.ResponseWriter, r *http.Request)   { s.todo(w, r, "Прокси") }
 func (s *Server) deleteChannel(w http.ResponseWriter, r *http.Request) { s.todo(w, r, "Прокси") }
