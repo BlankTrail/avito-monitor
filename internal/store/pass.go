@@ -159,6 +159,14 @@ func savePassTx(ctx context.Context, tx *sql.Tx, p Pass, listings []avito.Listin
 	if err := updateBaseline(ctx, tx, p, p.Evidential); err != nil {
 		return out, err
 	}
+	// The window producer runs last and inside this transaction, because a set
+	// difference against the previous window must not be observed
+	// half-written: a reader that saw the arrivals without the departures
+	// would draw the wrong conclusion from a snapshot that looked consistent.
+	if err := produceWindow(ctx, tx, p, passID, listings, previous,
+		out.Arrivals, adm, out.Comparable, w); err != nil {
+		return out, err
+	}
 	out.Previous = previous
 	return out, nil
 }
@@ -352,11 +360,23 @@ func updateMembers(ctx context.Context, tx *sql.Tx, p Pass, listings []avito.Lis
 	// alone afterwards, because the absence gate needs an elapsed span as well
 	// as a count: two confirmations twenty seconds apart are one page of churn,
 	// and two twenty minutes apart are evidence.
+	// Every absent member, not only the ones that were present last time.
+	//
+	// The first draft filtered on present = 1, which froze the streak at one:
+	// a listing missing from its second pass was already present = 0 and so
+	// was never updated again, and absence_confirmations of two could never be
+	// reached — no disappearance would ever have been confirmed. Found by
+	// increment 4's window tests, which are the first thing to read the counter
+	// rather than only write it.
+	//
+	// missing_since is coalesced rather than overwritten, so it keeps the
+	// moment the listing was FIRST missed. That is what the span gate measures,
+	// and refreshing it every pass would make the span permanently zero.
 	q := `UPDATE watch_members
 	      SET missing_streak = missing_streak + 1,
 	          missing_since  = coalesce(missing_since, ?),
 	          present        = 0
-	      WHERE watch_id = ? AND present = 1`
+	      WHERE watch_id = ?`
 	args := []any{p.StartedAt, p.WatchID}
 	if len(seen) > 0 {
 		q += ` AND item_id NOT IN (` + placeholders(len(seen)) + `)`
