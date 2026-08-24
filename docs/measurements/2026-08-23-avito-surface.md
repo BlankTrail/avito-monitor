@@ -300,3 +300,23 @@ Two further facts, both checked rather than assumed:
 The vendor's claim that rotation discards the jar is theirs about their own proxy. It is taken
 as true here and checked in the soak run, where a rotate followed by a request that still
 carries the old clearance would show up as an unexplained pass.
+
+## 19. Direct mode cannot present a current Chrome
+
+A live BlankTrail port was measured presenting profile `Chrome_151_win`. The newest Chrome
+hello `refraction-networking/utls` ships is `HelloChrome_133`; the full list tops out at 133
+with 131, 120 and 120_PQ below it.
+
+So mode (b) cannot impersonate a browser anyone is actually running. The choice is between
+claiming a current Chrome in the User-Agent over an eighteen-month-old handshake, or claiming
+the version the handshake actually presents. This project claims 133 in both, and a test pins
+the two together.
+
+The reasoning is that an internal contradiction is a sharper signal than being out of date. A
+client whose headers say Chrome 151 and whose ClientHello says 133 is a thing no browser
+produces; a client running Chrome 133 in 2026-08 is a person who has not updated, which is
+common. The cost is real and it is accepted rather than hidden: the direct mode's fingerprint
+is, by construction, that of a stale browser.
+
+If Avito ever scores browser recency, mode (b) fails uniformly and the remedy is a newer utls
+rather than anything in this repository.

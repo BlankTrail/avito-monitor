@@ -78,7 +78,7 @@ Every number below was measured on 2026-08-23 and every one of them ends up enco
 
 The package's non-test code imports nothing outside the standard library, so this costs no dependency. Copy it; do not improve it.
 
-- [ ] **Step 1: Copy both trees and rewrite the module path**
+- [x] **Step 1: Copy both trees and rewrite the module path**
 
 ```bash
 cd S:/Projects/Avito_Go
@@ -92,7 +92,7 @@ gofmt -l blanktrail/ internal/testutil/fakebt/
 
 Expected: `gofmt -l` prints nothing.
 
-- [ ] **Step 2: Run the copied tests before changing anything**
+- [x] **Step 2: Run the copied tests before changing anything**
 
 ```bash
 cd S:/Projects/Avito_Go && go test ./blanktrail/ ./internal/testutil/fakebt/ 2>&1 | tail -5
@@ -100,7 +100,7 @@ cd S:/Projects/Avito_Go && go test ./blanktrail/ ./internal/testutil/fakebt/ 2>&
 
 Expected: both PASS. If they do not, stop — a vendored package that does not pass its own suite on arrival must not be modified on top of that, and the difference is between the two Go versions or the copy, not something to fix by editing the package.
 
-- [ ] **Step 3: Write the failing test for the widened neutrality list**
+- [x] **Step 3: Write the failing test for the widened neutrality list**
 
 Open `blanktrail/neutrality_test.go` and replace the `banned` slice and the comment above it:
 
@@ -129,7 +129,7 @@ Open `blanktrail/neutrality_test.go` and replace the `banned` slice and the comm
 	}
 ```
 
-- [ ] **Step 4: Run it and watch it fail**
+- [x] **Step 4: Run it and watch it fail**
 
 ```bash
 cd S:/Projects/Avito_Go && go test ./blanktrail/ -run TestPackageNamesNoTarget -v 2>&1 | head -8
@@ -139,7 +139,7 @@ Expected: FAIL — `client.go mentions "avito"` is *not* what you should see. Wh
 
 If it FAILS, read which file mentions which word. A copied file that already names Avito would mean the copy came from somewhere other than WB_GO.
 
-- [ ] **Step 5: Prove the guard actually bites**
+- [x] **Step 5: Prove the guard actually bites**
 
 Temporarily append to `blanktrail/doc.go`:
 
@@ -160,7 +160,7 @@ cd S:/Projects/Avito_Go && go test ./blanktrail/ -run TestPackageNamesNoTarget 2
 
 Expected: PASS. A guard nobody has seen fail is a guard nobody knows works.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 cd S:/Projects/Avito_Go && git add blanktrail/ internal/testutil/fakebt/ && git commit -m "$(cat <<'MSG'
@@ -200,7 +200,7 @@ MSG
 
 A live port reports `captcha_action: "rotate_retry"` and `captcha_max_attempts: 3`. The SDK cannot set either, so every port this project opens takes whatever the proxy's default happens to be — which is a policy decision made somewhere this project cannot see. Additive: an empty action and a zero count are omitted, so an existing caller's behaviour does not move.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 `blanktrail/captcha_test.go`:
 
@@ -260,7 +260,7 @@ func TestPortSpecOmitsUnsetCaptchaPolicy(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run it and watch it fail**
+- [x] **Step 2: Run it and watch it fail**
 
 ```bash
 cd S:/Projects/Avito_Go && go test ./blanktrail/ -run TestPortSpec 2>&1 | head -5
@@ -268,7 +268,7 @@ cd S:/Projects/Avito_Go && go test ./blanktrail/ -run TestPortSpec 2>&1 | head -
 
 Expected: FAIL — `spec.CaptchaAction undefined`.
 
-- [ ] **Step 3: Add the two fields**
+- [x] **Step 3: Add the two fields**
 
 In `blanktrail/client.go`, inside `type PortSpec struct`, immediately after the `JSSolver` field:
 
@@ -295,7 +295,7 @@ In `func (s PortSpec) request(...)`, in the literal that builds `req`:
 		CaptchaMaxAttempts: s.CaptchaMaxAttempts,
 ```
 
-- [ ] **Step 4: Run the tests and watch them pass**
+- [x] **Step 4: Run the tests and watch them pass**
 
 ```bash
 cd S:/Projects/Avito_Go && go test ./blanktrail/ 2>&1 | tail -3
@@ -303,7 +303,7 @@ cd S:/Projects/Avito_Go && go test ./blanktrail/ 2>&1 | tail -3
 
 Expected: PASS for the whole package, `TestPackageNamesNoTarget` included — which is the point of having taken `captcha` off the list in Task 1 rather than now.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd S:/Projects/Avito_Go && git add blanktrail/ && git commit -m "$(cat <<'MSG'
@@ -344,7 +344,7 @@ MSG
   - `type Lease interface { Do; Session; Label; Profile; RotateEgress; RenewIdentity; Release }`
   - `type Leaser interface { Acquire; Mode; Caps; Close }`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 `internal/transport/mode_test.go`:
 
@@ -428,7 +428,7 @@ func TestDirectProfileSetsTheWholeSet(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run it and watch it fail**
+- [x] **Step 2: Run it and watch it fail**
 
 ```bash
 cd S:/Projects/Avito_Go && go test ./internal/transport/ 2>&1 | head -6
@@ -436,7 +436,7 @@ cd S:/Projects/Avito_Go && go test ./internal/transport/ 2>&1 | head -6
 
 Expected: FAIL — the package does not exist.
 
-- [ ] **Step 3: Write the two files**
+- [x] **Step 3: Write the two files**
 
 `internal/transport/mode.go`:
 
@@ -598,7 +598,7 @@ type Leaser interface {
 }
 ```
 
-- [ ] **Step 4: Run the tests and watch them pass**
+- [x] **Step 4: Run the tests and watch them pass**
 
 The seam declares five methods the SDK already has and three that are ours. Nothing asserts that here on purpose: `*blanktrail.Lease` is wrapped in Task 6, and the compile-time assertion belongs where the wrapper is, not where the interface is.
 
@@ -608,7 +608,7 @@ cd S:/Projects/Avito_Go && gofmt -w ./internal && go test ./internal/transport/ 
 
 Expected: three PASSes.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd S:/Projects/Avito_Go && git add internal/transport/ && git commit -m "$(cat <<'MSG'
@@ -646,7 +646,7 @@ MSG
 
 Every rule below is a measurement, not an invention. This server is the only place the ladder's behaviour can be tested without spending real requests on a real target, and **a fake that is kinder than the original teaches the ladder the wrong lesson** — a lesson only ever unlearned in production.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `internal/testutil/fakeavito/fakeavito_test.go` with these seven tests. Each one is a measured fact; none is a design preference.
 
@@ -834,7 +834,7 @@ func TestSwitchesProduceTheThreeShapesTheClassifierMustTellApart(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run it and watch it fail**
+- [x] **Step 2: Run it and watch it fail**
 
 ```bash
 cd S:/Projects/Avito_Go && go test ./internal/testutil/fakeavito/ 2>&1 | head -5
@@ -842,7 +842,7 @@ cd S:/Projects/Avito_Go && go test ./internal/testutil/fakeavito/ 2>&1 | head -5
 
 Expected: FAIL — the package does not exist.
 
-- [ ] **Step 3: Write the server**
+- [x] **Step 3: Write the server**
 
 Create `internal/testutil/fakeavito/fakeavito.go`. The package comment carries the argument, because a reader who does not know why the rules are shaped this way will soften them.
 
@@ -1105,7 +1105,7 @@ func cookie(r *http.Request, name string) string {
 }
 ```
 
-- [ ] **Step 4: Run the tests and watch them pass**
+- [x] **Step 4: Run the tests and watch them pass**
 
 ```bash
 cd S:/Projects/Avito_Go && gofmt -w ./internal && go test ./internal/testutil/fakeavito/ -v 2>&1 | grep -E "^(--- |PASS|FAIL|ok)"
@@ -1113,7 +1113,7 @@ cd S:/Projects/Avito_Go && gofmt -w ./internal && go test ./internal/testutil/fa
 
 Expected: seven PASSes.
 
-- [ ] **Step 5: Prove the fake's page is one the real extractor reads**
+- [x] **Step 5: Prove the fake's page is one the real extractor reads**
 
 A fake origin that serves markup the real parser cannot read tests nothing. Add to `fakeavito_test.go`:
 
@@ -1150,7 +1150,7 @@ cd S:/Projects/Avito_Go && go test ./internal/testutil/fakeavito/ -run TestPageI
 
 Expected: PASS. If the state block does not decode, the escaping in `page()` is wrong — `window.__initialData__` is a JS string literal *holding* JSON, so the inner quotes are backslash-escaped inside a Go raw string, and that is easy to get wrong in exactly one direction.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 cd S:/Projects/Avito_Go && git add internal/testutil/fakeavito/ && git commit -m "$(cat <<'MSG'
@@ -1188,7 +1188,7 @@ MSG
 
 On this target an empty query, a dropped hydration state and a payload we have stopped understanding are all HTTP 200 with no listings, and **only the parse tells them apart**. Giving the classifier the status alone is what makes a monitor go quiet and look healthy.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 `internal/transport/class_test.go`:
 
@@ -1320,7 +1320,7 @@ func TestRemedies(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run it and watch it fail**
+- [x] **Step 2: Run it and watch it fail**
 
 ```bash
 cd S:/Projects/Avito_Go && go test ./internal/transport/ -run 'TestClassify|TestCold|TestChallenge|TestRemedies' 2>&1 | head -5
@@ -1328,7 +1328,7 @@ cd S:/Projects/Avito_Go && go test ./internal/transport/ -run 'TestClassify|Test
 
 Expected: FAIL — `undefined: Classify`.
 
-- [ ] **Step 3: Write the classifier**
+- [x] **Step 3: Write the classifier**
 
 `internal/transport/class.go`:
 
@@ -1497,7 +1497,7 @@ func Classify(in Input) Verdict {
 }
 ```
 
-- [ ] **Step 4: Run the tests and watch them pass**
+- [x] **Step 4: Run the tests and watch them pass**
 
 ```bash
 cd S:/Projects/Avito_Go && gofmt -w ./internal && go test ./internal/transport/ -v 2>&1 | grep -E "^(--- |PASS|FAIL|ok)"
@@ -1505,7 +1505,7 @@ cd S:/Projects/Avito_Go && gofmt -w ./internal && go test ./internal/transport/ 
 
 Expected: every test PASSes, the three from Task 3 included.
 
-- [ ] **Step 5: Classify the real captures, and pin what they come out as**
+- [x] **Step 5: Classify the real captures, and pin what they come out as**
 
 Add to `class_test.go`:
 
@@ -1568,7 +1568,7 @@ cd S:/Projects/Avito_Go && go test ./internal/transport/ -run TestClassifyRealCa
 
 Expected: six PASSes. **`mobile-search-empty` coming out as `ClassEmpty` rather than `ClassSoftBlock` is the whole reason the classifier is per surface** — under the first draft of this design it was the second, and every quiet query would have dropped its session and re-paid a solve.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 cd S:/Projects/Avito_Go && git add internal/transport/ && git commit -m "$(cat <<'MSG'
@@ -1613,7 +1613,7 @@ MSG
 
 The pool already leases the most-rested port and already refuses to hand one back before its cooldown — `Pool.take()` does both, and this task configures it rather than reimplementing it.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 `internal/transport/bt/leaser_test.go`:
 
@@ -1769,7 +1769,7 @@ func TestRotationIsReachableFromOneStatusOnly(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run it and watch it fail**
+- [x] **Step 2: Run it and watch it fail**
 
 ```bash
 cd S:/Projects/Avito_Go && go test ./internal/transport/bt/ 2>&1 | head -5
@@ -1777,7 +1777,7 @@ cd S:/Projects/Avito_Go && go test ./internal/transport/bt/ 2>&1 | head -5
 
 Expected: FAIL — the package does not exist.
 
-- [ ] **Step 3: Check what `fakebt` actually records**
+- [x] **Step 3: Check what `fakebt` actually records**
 
 The tests above assume `fakebt.Server` exposes `URL()`, `Key()` and `Requests()` returning records with `Path` and a decoded `Body`. Confirm before writing against it:
 
@@ -1787,7 +1787,7 @@ cd S:/Projects/Avito_Go && grep -n "^func (s \*Server)\|^type Recorded" internal
 
 If the recorded shape differs — for example if it keeps the raw body rather than a decoded map — adapt the tests to what it records rather than changing `fakebt`. It is vendored.
 
-- [ ] **Step 4: Write the Leaser**
+- [x] **Step 4: Write the Leaser**
 
 `internal/transport/bt/leaser.go`:
 
@@ -1963,7 +1963,7 @@ func (p *portLease) Label() string {
 func (p *portLease) Profile() transport.Profile { return p.prof }
 ```
 
-- [ ] **Step 5: Run the tests and watch them pass**
+- [x] **Step 5: Run the tests and watch them pass**
 
 ```bash
 cd S:/Projects/Avito_Go && gofmt -w ./internal && go test ./internal/transport/... -v 2>&1 | grep -E "^(--- |PASS|FAIL|ok)"
@@ -1973,7 +1973,7 @@ Expected: PASS. `TestLeaserSatisfiesTheSeam` failing to compile names whichever 
 
 If `RenewIdentity` is missing from the seam's viewpoint — the SDK's returns an error and takes a context, which is what the seam declares — nothing needs adding. If `PoolConfig` has no `CountFailure`, stop: that field is the load-bearing one and its absence means the copy came from an older tree.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 cd S:/Projects/Avito_Go && git add internal/transport/bt/ && git commit -m "$(cat <<'MSG'
@@ -2014,7 +2014,7 @@ MSG
 
 Go's stock ClientHello ships no GREASE, a cipher order no browser produces, and an extension order identical in every Go binary on earth. A perfect header set over it is a Go client wearing a hat.
 
-- [ ] **Step 1: Take the dependency**
+- [x] **Step 1: Take the dependency**
 
 ```bash
 cd S:/Projects/Avito_Go
@@ -2034,7 +2034,7 @@ cd S:/Projects/Avito_Go && go test ./avito/ -run TestPackageReachesNoNetwork 2>&
 
 Expected: `ok`. If it fails, something imported `direct` from `avito`, which is backwards — the domain must not know about transport.
 
-- [ ] **Step 2: Write the failing test**
+- [x] **Step 2: Write the failing test**
 
 `internal/transport/direct/dial_test.go`:
 
@@ -2152,7 +2152,7 @@ Two helpers and a small type are needed by these tests; write them in the same f
 
 Write them as the test needs; nothing in production depends on their shape.
 
-- [ ] **Step 3: Run it and watch it fail**
+- [x] **Step 3: Run it and watch it fail**
 
 ```bash
 cd S:/Projects/Avito_Go && go test ./internal/transport/direct/ 2>&1 | head -6
@@ -2160,7 +2160,7 @@ cd S:/Projects/Avito_Go && go test ./internal/transport/direct/ 2>&1 | head -6
 
 Expected: FAIL — `undefined: Fingerprint`.
 
-- [ ] **Step 4: Write the profiles and the dialler**
+- [x] **Step 4: Write the profiles and the dialler**
 
 `internal/transport/direct/profile.go`:
 
@@ -2341,7 +2341,7 @@ func newTransport(fp Fingerprint, roots *x509Pool) http.RoundTripper {
 }
 ```
 
-- [ ] **Step 5: Run the tests and watch them pass**
+- [x] **Step 5: Run the tests and watch them pass**
 
 ```bash
 cd S:/Projects/Avito_Go && gofmt -w ./internal && go test ./internal/transport/direct/ -v 2>&1 | grep -E "^(--- |PASS|FAIL|ok)"
@@ -2349,7 +2349,7 @@ cd S:/Projects/Avito_Go && gofmt -w ./internal && go test ./internal/transport/d
 
 Expected: five PASSes. If `utls.HelloChrome_131` does not exist in the version resolved, use the nearest `HelloChrome_*` the module offers and say which in the commit message — the identity must be one utls actually ships, not one the plan wished for.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 cd S:/Projects/Avito_Go && git add go.mod go.sum internal/transport/direct/ && git commit -m "$(cat <<'MSG'
@@ -2392,7 +2392,7 @@ MSG
 - Consumes: nothing.
 - Produces: `type Jar struct{}`; `NewJar(host string) *Jar`; `(*Jar) SetCookies(*url.URL, []*http.Cookie)`; `(*Jar) Cookies(*url.URL) []*http.Cookie` (i.e. `http.CookieJar`); `(*Jar).NonceAge(now time.Time) time.Duration`; `(*Jar).Identity() string`; `(*Jar).Snapshot() JarState` / `RestoreJar(JarState) *Jar`; `const NonceName, IdentityName`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 `internal/transport/direct/jar_test.go`:
 
@@ -2520,7 +2520,7 @@ func TestDeletionIsHonoured(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run it and watch it fail**
+- [x] **Step 2: Run it and watch it fail**
 
 ```bash
 cd S:/Projects/Avito_Go && go test ./internal/transport/direct/ -run TestJar 2>&1 | head -5
@@ -2528,7 +2528,7 @@ cd S:/Projects/Avito_Go && go test ./internal/transport/direct/ -run TestJar 2>&
 
 Expected: FAIL — `undefined: NewJar`.
 
-- [ ] **Step 3: Write the jar**
+- [x] **Step 3: Write the jar**
 
 `internal/transport/direct/jar.go`:
 
@@ -2697,7 +2697,7 @@ func (j *Jar) owns(u *url.URL) bool {
 }
 ```
 
-- [ ] **Step 4: Run the tests and watch them pass**
+- [x] **Step 4: Run the tests and watch them pass**
 
 ```bash
 cd S:/Projects/Avito_Go && gofmt -w ./internal && go test ./internal/transport/direct/ -run TestJar -v 2>&1 | grep -E "^(--- |PASS|FAIL|ok)"
@@ -2705,7 +2705,7 @@ cd S:/Projects/Avito_Go && gofmt -w ./internal && go test ./internal/transport/d
 
 Expected: five PASSes. The `TestJarIsScopedToOneHostAtConstruction` case for `avito.ru.evil.test` is the one worth watching: a scoping check written as `strings.HasSuffix(h, j.host)` without the dot would accept it.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd S:/Projects/Avito_Go && git add internal/transport/direct/ && git commit -m "$(cat <<'MSG'
@@ -2747,7 +2747,7 @@ MSG
 
 Two budgets at two scopes, because identities and addresses are exhausted by different things.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 `internal/transport/pace_test.go`:
 
@@ -2892,7 +2892,7 @@ func TestWindowSurvivesARestart(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run it and watch it fail**
+- [x] **Step 2: Run it and watch it fail**
 
 ```bash
 cd S:/Projects/Avito_Go && go test ./internal/transport/ -run 'TestFloor|TestCeiling|TestSecond|TestBudget|TestWindow' 2>&1 | head -5
@@ -2900,7 +2900,7 @@ cd S:/Projects/Avito_Go && go test ./internal/transport/ -run 'TestFloor|TestCei
 
 Expected: FAIL — `undefined: NewPacer`.
 
-- [ ] **Step 3: Write the pacer**
+- [x] **Step 3: Write the pacer**
 
 `internal/transport/pace.go`:
 
@@ -3114,7 +3114,7 @@ func sleepUntil(ctx context.Context, t time.Time) error {
 }
 ```
 
-- [ ] **Step 4: Run the tests and watch them pass**
+- [x] **Step 4: Run the tests and watch them pass**
 
 ```bash
 cd S:/Projects/Avito_Go && gofmt -w ./internal && go test ./internal/transport/ -v 2>&1 | grep -E "^(--- |PASS|FAIL|ok)"
@@ -3122,7 +3122,7 @@ cd S:/Projects/Avito_Go && gofmt -w ./internal && go test ./internal/transport/ 
 
 Expected: every test PASSes.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd S:/Projects/Avito_Go && git add internal/transport/ && git commit -m "$(cat <<'MSG'
@@ -3163,7 +3163,7 @@ MSG
 
 A session is one identity: one jar, one fingerprint, one egress, one mutex. The mutex is per session and not per process — two requests on two jars share nothing and are free.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 `internal/transport/direct/leaser_test.go`:
 
@@ -3410,7 +3410,7 @@ func TestFirst403OnARestoredJarIsNotBlamedOnTheAddress(t *testing.T) {
 
 Write the four helpers (`openTest`, `openTestAgainst`, `openTestAgainstPath`, `isNoOtherAddress`) in the same file. `openTest` needs no server for the cases that never make a request; the others point the `Leaser` at `srv.URL()` and disable TLS by giving it a plain-HTTP dialler, because `fakeavito` is `httptest.NewServer` and the point of these tests is the session logic rather than the handshake — which Task 7 already covers.
 
-- [ ] **Step 2: Run it and watch it fail**
+- [x] **Step 2: Run it and watch it fail**
 
 ```bash
 cd S:/Projects/Avito_Go && go test ./internal/transport/direct/ -run 'TestLeaser|TestCaps|TestWarm|TestOne|TestTwo|TestMost|TestRotate|TestRenew|TestIdentity|TestFirst403' 2>&1 | head -5
@@ -3418,7 +3418,7 @@ cd S:/Projects/Avito_Go && go test ./internal/transport/direct/ -run 'TestLeaser
 
 Expected: FAIL — `undefined: Leaser`.
 
-- [ ] **Step 3: Write `session.go`**
+- [x] **Step 3: Write `session.go`**
 
 One identity, and everything it owns:
 
@@ -3518,7 +3518,7 @@ func (s *session) needsWarmUp() bool {
 }
 ```
 
-- [ ] **Step 4: Write `leaser.go`**
+- [x] **Step 4: Write `leaser.go`**
 
 The Leaser holds the sessions, leases the most-rested, and persists them. Mirror `blanktrail.Pool.take()` deliberately: skip the leased, take the one used longest ago, and return the exact wait when none is ready. The two modes must behave the same way from the ladder's point of view, and the SDK's version is the one that has been in production.
 
@@ -3531,7 +3531,7 @@ Key points the implementation must carry, each as a comment:
 - `Save`/`load` persist `[]JarState` plus each session's egress to `Config.StatePath`, written to a temporary file and renamed, so a crash mid-write does not leave a half-file where the identity used to be.
 - `Caps{SolvesChallenges: false, RotatesEgress: len(upstreams) > 1, Addresses: max(1, len(upstreams))}`.
 
-- [ ] **Step 5: Run the tests and watch them pass**
+- [x] **Step 5: Run the tests and watch them pass**
 
 ```bash
 cd S:/Projects/Avito_Go && gofmt -w ./internal && go test ./internal/transport/... -v 2>&1 | grep -E "^(--- |PASS|FAIL|ok)"
@@ -3539,7 +3539,7 @@ cd S:/Projects/Avito_Go && gofmt -w ./internal && go test ./internal/transport/.
 
 Expected: every test PASSes.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 cd S:/Projects/Avito_Go && git add internal/transport/direct/ && git commit -m "$(cat <<'MSG'
@@ -3578,7 +3578,7 @@ MSG
 - Consumes: everything above.
 - Produces: `type Fetcher struct{}`; `NewFetcher(Leaser, *Pacer, FetchConfig) *Fetcher`; `(*Fetcher).Fetch(ctx, req *http.Request, surface avito.Surface) (Result, error)`; `type Result struct { Page avito.Page; Verdict Verdict; Attempts int; Session, Label string; Body []byte }`; `type HaltError struct{ Verdict; URL string; At time.Time }`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Cover exactly these, against `fakeavito`:
 
@@ -3617,7 +3617,7 @@ Cover exactly these, against `fakeavito`:
 
 Write each with the reasoning above as its doc comment.
 
-- [ ] **Step 2: Run and watch it fail**
+- [x] **Step 2: Run and watch it fail**
 
 ```bash
 cd S:/Projects/Avito_Go && go test ./internal/transport/ -run 'TestFetch|TestThrottled|TestBurned|TestChallenge|TestShape|TestEmpty|TestNothingReads|TestLadder' 2>&1 | head -5
@@ -3625,7 +3625,7 @@ cd S:/Projects/Avito_Go && go test ./internal/transport/ -run 'TestFetch|TestThr
 
 Expected: FAIL — `undefined: NewFetcher`.
 
-- [ ] **Step 3: Write the ladder**
+- [x] **Step 3: Write the ladder**
 
 The shape, with the reasoning that must appear as comments:
 
@@ -3652,13 +3652,13 @@ The shape, with the reasoning that must appear as comments:
 // gone away is a monitor that resumes into it all night.
 ```
 
-- [ ] **Step 4: Run the tests and watch them pass**
+- [x] **Step 4: Run the tests and watch them pass**
 
 ```bash
 cd S:/Projects/Avito_Go && go test ./internal/transport/... 2>&1 | tail -4 && go vet ./...
 ```
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd S:/Projects/Avito_Go && git add internal/transport/ && git commit -m "$(cat <<'MSG'
@@ -3699,7 +3699,7 @@ MSG
 - Consumes: `transport.*`, `bt.*`, `direct.*`, `avito.*`.
 - Produces: the binary, and the increment's demonstrable behaviour.
 
-- [ ] **Step 1: Write it**
+- [x] **Step 1: Write it**
 
 `avitomon fetch [-mode direct|blanktrail] [-surface mobile|desktop] [-control URL] [-key K] [-ports N] [-proxies FILE] [-state FILE] <url>` prints one line of `class`, `rule`, `path`, `listings`, `total`, `session`, `label`, `attempts`, and then the first few listings — the same shape `avitoparse` prints, so the two are comparable at a glance.
 
@@ -3708,7 +3708,7 @@ Two rules the command must follow:
 - **The API key never reaches a file this program writes.** It comes from `-key` or from `AVITOMON_BLANKTRAIL_KEY`, and it is never echoed, never logged and never included in an error. The spec puts it in a settings column the panel does not display; here it is an argument that goes nowhere.
 - **A halt exits non-zero and prints the boundary message**, naming the status, the marker, the URL and the fact that BlankTrail is what passes it. That message is the product's main sales moment and it should read like an explanation rather than an advertisement.
 
-- [ ] **Step 2: The demonstrable behaviour, run**
+- [x] **Step 2: The demonstrable behaviour, run**
 
 ```bash
 cd S:/Projects/Avito_Go && go build ./... && go run ./cmd/avitomon fetch -mode direct \
@@ -3725,7 +3725,7 @@ cd S:/Projects/Avito_Go && AVITOMON_BLANKTRAIL_KEY=<key> go run ./cmd/avitomon f
 
 Expected: `class=ok`, thirty listings, `label=blanktrail:200NN`.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 cd S:/Projects/Avito_Go && git add cmd/avitomon/ docs/measurements/ && git commit -m "$(cat <<'MSG'
@@ -3765,13 +3765,13 @@ MSG
 
 This is the task the whole increment exists to make possible, and the one the README is waiting on. Three questions, and none of them currently has an answer that is not an extrapolation from forty requests.
 
-- [ ] **Step 1: Write the harness**
+- [x] **Step 1: Write the harness**
 
 `avitosoak -mode direct|blanktrail -requests N -spacing D -arm NAME` walks one query's page one repeatedly through the real ladder, and records per request: the timestamp, the class, the status, the session, the egress label, the extraction rule, the listing count and the elapsed time. It writes JSONL, and a summary with the ban rate per block of ten requests.
 
 It stops early on the first `ClassChallenge` in direct mode and says so. It never runs unattended: the operator watches it.
 
-- [ ] **Step 2: Run both arms and write down what happened**
+- [x] **Step 2: Run both arms and write down what happened**
 
 Run the direct arm first, so BlankTrail works from an address the direct arm has already annoyed — the same discipline `Avito_Parser/docs/blanktrail/RESULTS.md` used, and for the same reason: it makes the comparison harder for the paid mode rather than easier.
 
@@ -3781,11 +3781,11 @@ Answer these three, in `docs/measurements/2026-08-XX-soak.md`, with the numbers 
 2. **Do several warm jars on one address beat one?** The design assumes so and says it is unmeasured. If they do not, the direct pool collapses to one jar per address and the panel's arithmetic changes.
 3. **What is the honest number to put in the README in place of "300-700"?**
 
-- [ ] **Step 3: Correct whatever the run contradicts**
+- [x] **Step 3: Correct whatever the run contradicts**
 
 Whatever the soak says, the spec and the plan are corrected to match it rather than the other way round. If 3.5 s does not hold, the floor moves and the budget arithmetic moves with it. If the mobile surface is not served to a utls client, `ChromeAndroid` is marked unusable and direct mode is desktop-only — which doubles its request cost and halves the watch figure, and the panel must say so.
 
-- [ ] **Step 4: Commit the measurement, then the README line it earns**
+- [x] **Step 4: Commit the measurement, then the README line it earns**
 
 ```bash
 cd S:/Projects/Avito_Go && git add docs/measurements/ && git commit -m "$(cat <<'MSG'
