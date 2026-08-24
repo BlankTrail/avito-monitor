@@ -5,6 +5,7 @@ package notify
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
@@ -433,5 +434,57 @@ func TestTheAddressComesFromTheTarget(t *testing.T) {
 	}
 	if tr.sent[0].Kind != "telegram" {
 		t.Errorf("Kind = %q; the ladder reads it to pick a transport", tr.sent[0].Kind)
+	}
+}
+
+// TestAPermanentFailureIsNotRetried.
+//
+// A chat that no longer exists will refuse the same way for ever. Spending
+// twelve attempts over a day and a half on it delays every message behind it,
+// and the person still never gets this one.
+func TestAPermanentFailureIsNotRetried(t *testing.T) {
+	s := openStore(t)
+	ctx := context.Background()
+	tgt := target(t, s)
+	queueOne(t, s, tgt, 1000, "привет")
+
+	gone := &sink{fail: fmt.Errorf("telegram: chat not found (400): %w", ErrPermanent)}
+	st, err := workerOn(s, gone, 2000).Run(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.GaveUp != 1 || st.Failed != 0 {
+		t.Errorf("Stats = %+v, want one given up and no retry", st)
+	}
+	var state string
+	var attempts int
+	if err := s.DB().QueryRow(
+		`SELECT state, attempts FROM notify_outbox LIMIT 1`).Scan(&state, &attempts); err != nil {
+		t.Fatal(err)
+	}
+	if state != "failed" {
+		t.Errorf("state = %q after a permanent refusal", state)
+	}
+	if attempts != 1 {
+		t.Errorf("attempts = %d; a permanent refusal must cost exactly one", attempts)
+	}
+}
+
+// TestAnUnclassifiedFailureIsTreatedAsTemporary.
+//
+// The default is deliberately this way round: a message retried unnecessarily
+// arrives late, a message abandoned wrongly never arrives at all.
+func TestAnUnclassifiedFailureIsTreatedAsTemporary(t *testing.T) {
+	s := openStore(t)
+	tgt := target(t, s)
+	queueOne(t, s, tgt, 1000, "привет")
+
+	st, err := workerOn(s, &sink{fail: errors.New("что-то пошло не так")}, 2000).
+		Run(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Failed != 1 || st.GaveUp != 0 {
+		t.Errorf("Stats = %+v, want one retry and no give-up", st)
 	}
 }

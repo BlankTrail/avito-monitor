@@ -4,6 +4,7 @@ package notify
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -94,7 +95,7 @@ func (w *Worker) Run(ctx context.Context) (Stats, error) {
 
 		attempts := m.Attempts + 1
 		reason := sendErr.Error()
-		if attempts >= maxAttempts {
+		if attempts >= maxAttempts || errors.Is(sendErr, ErrPermanent) {
 			if err := w.Store.MarkGivenUp(ctx, m.ID, reason); err != nil {
 				return st, err
 			}
