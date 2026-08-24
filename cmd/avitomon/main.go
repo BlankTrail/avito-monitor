@@ -48,6 +48,8 @@ func main() {
 		err = notifyCmd(os.Args[2:])
 	case "target":
 		err = targetCmd(os.Args[2:])
+	case "panel":
+		err = panelCmd(os.Args[2:])
 	default:
 		usage()
 		os.Exit(2)
@@ -81,6 +83,7 @@ func usage() {
 	fmt.Fprintln(os.Stderr, "  avitomon volume [flags]")
 	fmt.Fprintln(os.Stderr, "  avitomon target list|add [flags] <chat id>")
 	fmt.Fprintln(os.Stderr, "  avitomon notify [-test -chat <id> -rung <name>] [flags]")
+	fmt.Fprintln(os.Stderr, "  avitomon panel [-db avito.db] [-port 8765]")
 }
 
 func fetchCmd(args []string) error {
