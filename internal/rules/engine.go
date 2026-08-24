@@ -24,8 +24,32 @@ type Engine struct {
 	// engine's job ends at "this should be sent".
 	Render func(store.ChangeRow) string
 
+	// Summarise turns everything one aggregating rule fired on in this pass
+	// into a single message — «сорок объявлений подешевели» instead of forty
+	// messages.
+	//
+	// Optional in the same sense Render is. An aggregating rule with no
+	// Summarise falls back to rendering the first firing with a count in front
+	// of it, which is a worse message than a real summary and a much better one
+	// than silence.
+	Summarise func(r Rule, firings []Firing) string
+
 	// Now is the clock. Nil falls back to time.Now.
 	Now func() time.Time
+
+	// held is what the aggregating rules have fired on so far, by rule id.
+	// Nothing reaches the queue from here until Flush.
+	held map[int64][]Firing
+	// order is the rule ids in the order they first fired, so that two passes
+	// over the same data queue the same messages in the same order.
+	order []int64
+}
+
+// Firing is one match that got through, kept for the summary.
+type Firing struct {
+	Rule    Rule
+	Event   Event
+	EventID int64
 }
 
 // Apply returns how many messages were queued.
@@ -49,23 +73,98 @@ func (e *Engine) Apply(ctx context.Context, all []Rule, ev Event) (int, error) {
 		if !d.Send {
 			continue
 		}
-		targets, err := e.targetsFor(ctx, r)
+		if r.Aggregate {
+			// Held, not queued. The rule said its firings should arrive as one
+			// message, and the boundary that decides what "one message" covers
+			// is the pass — see Flush.
+			e.hold(r, ev, eventID)
+			continue
+		}
+		n, err := e.queue(ctx, r, e.render(ev.Change), &eventID)
 		if err != nil {
 			return queued, err
 		}
-		body := e.render(ev.Change)
-		for _, target := range targets {
-			at := e.now().Unix()
-			if err := e.Store.Enqueue(ctx, store.OutboxRow{
-				TargetID: target, RuleEventID: &eventID,
-				CreatedAt: at, DueAt: at, Body: body,
-			}); err != nil {
-				return queued, fmt.Errorf("rules: queue message: %w", err)
-			}
-			queued++
-		}
+		queued += n
 	}
 	return queued, nil
+}
+
+func (e *Engine) hold(r Rule, ev Event, eventID int64) {
+	if e.held == nil {
+		e.held = make(map[int64][]Firing)
+	}
+	if _, ok := e.held[r.ID]; !ok {
+		e.order = append(e.order, r.ID)
+	}
+	e.held[r.ID] = append(e.held[r.ID], Firing{Rule: r, Event: ev, EventID: eventID})
+}
+
+// Flush queues one message per aggregating rule that fired, and returns how
+// many messages that came to.
+//
+// It must be called once at the end of a pass. One Engine is one pass, and that
+// is what makes the aggregation boundary meaningful: «вместо сорока сообщений
+// одно» needs somewhere to count the forty, and the pass is the only boundary
+// that corresponds to anything a person would recognise.
+//
+// Calling it twice queues nothing the second time.
+func (e *Engine) Flush(ctx context.Context) (int, error) {
+	queued := 0
+	for _, ruleID := range e.order {
+		firings := e.held[ruleID]
+		if len(firings) == 0 {
+			continue
+		}
+		r := firings[0].Rule
+		n, err := e.queue(ctx, r, e.summarise(r, firings), nil)
+		if err != nil {
+			return queued, err
+		}
+		queued += n
+	}
+	e.held, e.order = nil, nil
+	return queued, nil
+}
+
+// queue puts one body in front of every enabled target this rule names.
+//
+// eventID is nil for a summary, and that is deliberate rather than lazy: a
+// summary is the outcome of many decisions, and pointing the row at one of
+// forty would make the other thirty-nine look as though nothing was sent about
+// them. The rule_events rows all exist, all carry the rule id, and all sit in
+// the same minute; the panel finds them that way.
+func (e *Engine) queue(ctx context.Context, r Rule, body string, eventID *int64) (int, error) {
+	targets, err := e.targetsFor(ctx, r)
+	if err != nil {
+		return 0, err
+	}
+	queued := 0
+	for _, target := range targets {
+		at := e.now().Unix()
+		if err := e.Store.Enqueue(ctx, store.OutboxRow{
+			TargetID: target, RuleEventID: eventID,
+			CreatedAt: at, DueAt: at, Body: body,
+		}); err != nil {
+			return queued, fmt.Errorf("rules: queue message: %w", err)
+		}
+		queued++
+	}
+	return queued, nil
+}
+
+// summarise falls back to the first firing with a count in front of it.
+//
+// Worse than a real summary, and much better than silence — which is what a nil
+// Summarise would otherwise mean for every aggregating rule.
+func (e *Engine) summarise(r Rule, firings []Firing) string {
+	if e.Summarise != nil {
+		return e.Summarise(r, firings)
+	}
+	first := e.render(firings[0].Event.Change)
+	if len(firings) == 1 {
+		return first
+	}
+	return fmt.Sprintf("%s: изменений — %d\n\n%s", r.Name, len(firings), first)
 }
 
 // targetsFor is the rule's own list intersected with the ones still switched

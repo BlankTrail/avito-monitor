@@ -55,7 +55,11 @@ func applyRules(ctx context.Context, s *store.Store, w store.Watch, since int64)
 		}
 		queued += n
 	}
-	return queued, nil
+	// The aggregating rules have queued nothing yet. One Engine is one pass,
+	// and the pass is the boundary that decides what «вместо сорока сообщений
+	// одно» counts the forty inside.
+	n, err := e.Flush(ctx)
+	return queued + n, err
 }
 
 // buildEngine puts the three halves together.
@@ -70,10 +74,15 @@ func buildEngine(s *store.Store, named map[int64]store.ListingName, w store.Watc
 	return &rules.Engine{
 		Store: s, Now: time.Now,
 		Render: func(c store.ChangeRow) string {
-			n := named[c.ItemID]
-			return telegram.Render(c, telegram.Subject{
-				WatchName: w.Name, Title: n.Title, URLPath: n.URLPath,
-			})
+			return telegram.Render(c, subjectFor(named, w, c))
+		},
+		Summarise: func(r rules.Rule, firings []rules.Firing) string {
+			lines := make([]telegram.Line, 0, len(firings))
+			for _, f := range firings {
+				lines = append(lines,
+					telegram.RenderLine(f.Event.Change, subjectFor(named, w, f.Event.Change)))
+			}
+			return telegram.Summarise(r.Name, lines)
 		},
 		Suppressor: rules.Suppressor{
 			Now: time.Now,
@@ -90,5 +99,12 @@ func buildEngine(s *store.Store, named map[int64]store.ListingName, w store.Watc
 				return err == nil && seen
 			},
 		},
+	}
+}
+
+func subjectFor(named map[int64]store.ListingName, w store.Watch, c store.ChangeRow) telegram.Subject {
+	n := named[c.ItemID]
+	return telegram.Subject{
+		WatchName: w.Name, Title: n.Title, URLPath: n.URLPath,
 	}
 }

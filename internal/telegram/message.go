@@ -30,24 +30,36 @@ type Subject struct {
 
 // Render turns one change into the message a person reads.
 func Render(c store.ChangeRow, s Subject) string {
-	head := lead(c.Confidence, headline(c, s))
+	l := RenderLine(c, s)
 
 	var b strings.Builder
-	b.WriteString(head)
-	if s.Title != "" && !isHealth(c.Kind) {
+	b.WriteString(l.Headline)
+	if l.Title != "" {
 		b.WriteString("\n")
-		b.WriteString(s.Title)
+		b.WriteString(l.Title)
 	}
 	if s.WatchName != "" {
 		b.WriteString("\n")
 		b.WriteString("Наблюдение: ")
 		b.WriteString(s.WatchName)
 	}
-	if link := listingURL(c, s); link != "" {
+	if l.URL != "" {
 		b.WriteString("\n")
-		b.WriteString(link)
+		b.WriteString(l.URL)
 	}
 	return b.String()
+}
+
+// RenderLine is the same change as the three pieces a summary needs.
+//
+// Render is this plus the watch's name, which a summary states once at the top
+// rather than forty times down the message.
+func RenderLine(c store.ChangeRow, s Subject) Line {
+	l := Line{Headline: lead(c.Confidence, headline(c, s)), URL: listingURL(c, s)}
+	if !isHealth(c.Kind) {
+		l.Title = s.Title
+	}
+	return l
 }
 
 // lead puts the hedge in front, or capitalises when there is nothing to hedge.
