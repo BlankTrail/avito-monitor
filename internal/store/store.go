@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -30,7 +31,25 @@ type Store struct {
 	wmu  sync.Mutex
 
 	now func() time.Time
+
+	// retention is settable because the spec says both body bounds are
+	// settings and neither may be unset. An unset struct means the defaults,
+	// never "unbounded".
+	retention atomic.Pointer[Retention]
 }
+
+// Retention is the thresholds this store thins by. A zero value has never been
+// set and means the defaults; it never means no limit, because an archive with
+// no limit is unbounded on a broken install and that is exactly when it grows
+// fastest.
+func (s *Store) Retention() Retention {
+	if r := s.retention.Load(); r != nil {
+		return *r
+	}
+	return DefaultRetention()
+}
+
+func (s *Store) SetRetention(r Retention) { s.retention.Store(&r) }
 
 // pragmas are set on every connection in the pool, which is why they travel in
 // the DSN rather than being executed once after Open: database/sql opens
