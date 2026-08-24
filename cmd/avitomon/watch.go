@@ -55,6 +55,19 @@ func watchCmd(args []string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("watch %d added\n", id)
+	made, err := seedRules(ctx, s, id)
+	if err != nil {
+		return err
+	}
+	// Printed, because a rule a person did not know they had is a rule they
+	// cannot turn off.
+	fmt.Printf("наблюдение %d добавлено, правил по умолчанию: %d\n", id, len(made))
+	for _, name := range made {
+		fmt.Printf("  %s\n", name)
+	}
+	if len(made) == 0 {
+		fmt.Println("  получателей нет, поэтому и правил нет: " +
+			"avitomon target add <chat id>, затем avitomon watch add ещё раз")
+	}
 	return nil
 }

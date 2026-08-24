@@ -85,7 +85,7 @@ func Subject(ev Event) SubjectPair {
 	case track.KindPriceChanged, track.KindPriceAppeared,
 		track.KindPriceWithdrawn, track.KindDiscountChanged,
 		track.KindTitleChanged:
-		return SubjectPair{Kind: SubjectThread, Key: ev.ThreadID}
+		return SubjectPair{Kind: SubjectThread, Key: ev.Change.ThreadID}
 	}
 	return SubjectPair{Kind: SubjectListing, Key: ev.Change.ItemID}
 }

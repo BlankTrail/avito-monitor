@@ -20,15 +20,12 @@ import (
 
 // Event is one change with the context a rule needs to judge it.
 //
-// The change row already carries the watch, so the watch is not repeated here:
-// two places holding one fact is two places to disagree. The thread and the
-// seller are not on it and are looked up, because a change is about a listing
-// and a rule may be about the thing that listing advertises or about who is
-// selling it.
+// The change row carries the watch, the thread and the seller already, so none
+// of the three is repeated here: two places holding one fact is two places to
+// disagree. What is left is the two things a change genuinely does not know
+// about itself.
 type Event struct {
-	Change   store.ChangeRow
-	ThreadID int64
-	SellerID int64
+	Change store.ChangeRow
 
 	// RepostOf is the listing this one succeeded, when the thread it joined
 	// already had a member. Set, an appearance is the same advertisement posted
@@ -44,8 +41,8 @@ type Event struct {
 
 // value is what a condition leaf reads. The bool is false when there is no
 // value, which the tree turns into a false leaf whatever the comparison — a
-//
 // price that was never read must not satisfy "under a thousand".
+//
 // float64 throughout, which is exact for every integer this product measures:
 // the type holds whole numbers up to 2^53, and a price in kopecks reaches that
 // at ninety trillion roubles. The arithmetic that must not lose a kopeck
@@ -75,7 +72,7 @@ func (ev Event) value(f Field) (float64, bool) {
 	case FieldWatchID:
 		return float64(ev.Change.WatchID), true
 	case FieldSellerID:
-		return float64(ev.SellerID), true
+		return float64(ev.Change.SellerID), true
 	case FieldPosition:
 		if ev.Position == nil {
 			return 0, false
@@ -164,9 +161,9 @@ func (s Scope) Covers(ev Event) bool {
 	case ScopeListing:
 		return ev.Change.ItemID == s.ID
 	case ScopeThread:
-		return ev.ThreadID == s.ID
+		return ev.Change.ThreadID == s.ID
 	case ScopeSeller:
-		return ev.SellerID == s.ID
+		return ev.Change.SellerID == s.ID
 	case ScopeWatch:
 		return ev.Change.WatchID == s.ID
 	case ScopeFilter:
@@ -344,7 +341,7 @@ func DedupKey(r Rule, ev Event) string {
 		track.KindPriceWithdrawn, track.KindDiscountChanged,
 		track.KindTitleChanged:
 		parts = append(parts,
-			strconv.FormatInt(ev.ThreadID, 10), c.Field, c.Was, c.Now)
+			strconv.FormatInt(c.ThreadID, 10), c.Field, c.Was, c.Now)
 
 	default:
 		// Everything else keys on the listing and its numbers, which is

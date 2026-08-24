@@ -14,11 +14,11 @@ func priceEvent() Event {
 	return Event{
 		Change: store.ChangeRow{
 			Kind: track.KindPriceChanged, ItemID: 7800000001, WatchID: 1,
+			ThreadID: 5000, SellerID: 42,
 			Field: "price", Was: "4000000", Now: "3500000",
 			Unit: track.UnitMinor, Confidence: 1.0,
 			HadBefore: true, HasNow: true,
 		},
-		ThreadID: 5000, SellerID: 42,
 	}
 }
 
@@ -40,7 +40,7 @@ func TestDedupKeyForAPriceKindIsOnTheThread(t *testing.T) {
 	a := priceEvent()
 	b := priceEvent()
 	b.Change.ItemID = 7800000999 // a repost: new number, same thread
-	b.ThreadID = a.ThreadID
+	b.Change.ThreadID = a.Change.ThreadID
 
 	if DedupKey(priceRule(), a) != DedupKey(priceRule(), b) {
 		t.Error("two incarnations of one advertisement produced different dedup " +

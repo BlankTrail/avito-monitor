@@ -144,6 +144,17 @@ func runOnce(ctx context.Context, s *store.Store, f *transport.Fetcher, w store.
 		fmt.Printf("  not comparable with the last pass: %s\n", saved.Comparable.Why)
 	}
 
+	// The rules run on what this pass produced, and the engine is built here
+	// rather than inside the store: internal/store must not learn what a rule
+	// is. A failure to notify does not fail the pass — the data is already
+	// written, and losing it because Telegram was unreachable would be the
+	// wrong trade.
+	if n, err := applyRules(ctx, s, w, started); err != nil {
+		fmt.Printf("  правила не отработали: %v\n", err)
+	} else if n > 0 {
+		fmt.Printf("  сообщений в очереди: %d\n", n)
+	}
+
 	var halt *transport.HaltError
 	if errors.As(ferr, &halt) {
 		// The watch stays halted, and this program never clears it.
