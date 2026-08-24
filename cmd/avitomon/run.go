@@ -199,12 +199,19 @@ func openLeaser(ctx context.Context, s *store.Store, mode transport.Mode,
 		// The identity is persisted by default, and that is not a convenience.
 		//
 		// Measured 2026-08-24 on this surface: in DIRECT mode the result set is
-		// a function of srv_id and is exact inside a session. Six passes over
-		// two identities gave 100% overlap within an identity, every pair, and
-		// 23% across them; two fresh identities shared zero of thirty. So a
-		// monitor that mints a new identity per run sees a complete turnover
-		// every tick — thirty arrivals and thirty disappearances, for ever —
-		// and every alert it sends is false.
+		// a function of srv_id. Six passes over two identities gave 100%
+		// overlap within an identity, every pair, and 23% across them; two
+		// fresh identities shared zero of thirty. So a monitor that mints a new
+		// identity per run sees a complete turnover every tick — thirty
+		// arrivals and thirty disappearances, for ever — and every alert it
+		// sends is false.
+		//
+		// "Exact inside a session" is how that first measurement put it, and a
+		// later one narrowed it: exact inside a MINUTE, and then decaying.
+		// Ten passes on one identity lost 39% of the window in under seven
+		// minutes on a busy query — see how-fast-the-window-turns-over.md. The
+		// identity is what makes two passes comparable at all; it does not make
+		// them comparable for ever.
 		//
 		// Sessions is 1 for the same reason, and it is a correctness setting
 		// rather than a performance one: two identities in the pool are two
