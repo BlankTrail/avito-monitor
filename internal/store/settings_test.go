@@ -3,6 +3,7 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"testing"
@@ -87,5 +88,92 @@ func TestBlankTrailConfigRoundTrips(t *testing.T) {
 	}
 	if got != want {
 		t.Errorf("BlankTrailConfig = %+v, want %+v", got, want)
+	}
+}
+
+// TestTheMTProtoSessionRoundTripsThroughTheDatabase.
+//
+// A restart that re-authorises is not merely slow: Telegram rate-limits bot
+// logins, so a monitor that lost its session on every restart would eventually
+// be refused. The plan's test for this exercised an in-memory stub, which
+// proves the stub works.
+func TestTheMTProtoSessionRoundTripsThroughTheDatabase(t *testing.T) {
+	s := openTemp(t)
+	ctx := context.Background()
+
+	// A first run has none, and that is not an error.
+	got, err := s.MTProtoSession(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != nil {
+		t.Errorf("a fresh database already holds a session: %d bytes", len(got))
+	}
+
+	blob := []byte{0x00, 0xff, 0x10, 'n', 'o', 't', 0x00, 't', 'e', 'x', 't'}
+	if err := s.StoreMTProtoSession(ctx, blob); err != nil {
+		t.Fatal(err)
+	}
+	got, err = s.MTProtoSession(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, blob) {
+		t.Errorf("read back %v, want %v — a BLOB column that mangles bytes "+
+			"would give a session that decodes to nothing", got, blob)
+	}
+}
+
+// TestTheSessionStoreSatisfiesWhatGotdWants, so the blob goes into the column
+// rather than into a file beside the binary.
+func TestTheSessionStoreSatisfiesWhatGotdWants(t *testing.T) {
+	s := openTemp(t)
+	ctx := context.Background()
+	store := s.MTProtoSessionStore()
+
+	if err := store.StoreSession(ctx, []byte("blob")); err != nil {
+		t.Fatal(err)
+	}
+	got, err := store.LoadSession(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "blob" {
+		t.Errorf("LoadSession = %q", got)
+	}
+}
+
+// TestTheThreeTelegramCredentialsTravelTogether.
+//
+// A rung needs all three or none: MTProto's bot login takes the token AND the
+// application identity, and fetching them one at a time would let a caller
+// check one and dial on the strength of it.
+func TestTheThreeTelegramCredentialsTravelTogether(t *testing.T) {
+	s := openTemp(t)
+	ctx := context.Background()
+
+	want := TelegramConfig{BotToken: "123:AAH", APIID: 9876, APIHash: "хэш"}
+	if err := s.SetTelegramConfig(ctx, want); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.TelegramConfig(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != want {
+		t.Errorf("config = %+v, want %+v", got, want)
+	}
+}
+
+// TestAnEmptyConfigIsNotAnError. A first run has none of the three, and that is
+// a state to report on the settings screen rather than a failure to open the
+// database.
+func TestAnEmptyConfigIsNotAnError(t *testing.T) {
+	got, err := openTemp(t).TelegramConfig(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != (TelegramConfig{}) {
+		t.Errorf("a fresh database holds %+v", got)
 	}
 }
