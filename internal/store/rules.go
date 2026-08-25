@@ -454,3 +454,41 @@ func (s *Store) MarkGivenUp(ctx context.Context, id int64, reason string) error 
 	}
 	return nil
 }
+
+// DeleteRule removes a rule and, by the schema's cascade, its whole decision
+// log.
+//
+// The cascade is the reason the panel asks before calling this: rule_events is
+// the only answer the product has to «почему мне не сказали», and deleting a
+// rule takes with it every record of what that rule did or declined to do. That
+// is the right behaviour — a log pointing at a rule nobody can look at explains
+// nothing — but it is not something to let somebody discover afterwards.
+func (s *Store) DeleteRule(ctx context.Context, id int64) error {
+	s.wmu.Lock()
+	defer s.wmu.Unlock()
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM rules WHERE id = ?`, id); err != nil {
+		return fmt.Errorf("store: delete rule %d: %w", id, err)
+	}
+	return nil
+}
+
+// DeleteTarget removes a recipient and everything queued for it.
+//
+// notify_outbox cascades the same way. A message queued for an address that no
+// longer exists cannot be delivered and would sit in the queue being retried
+// twelve times, so taking it with the target is the only honest outcome — and
+// the panel says so before it asks.
+//
+// It does not touch rules.targets, which is a JSON array and not a foreign key.
+// A rule left pointing at a deleted id is not broken: the engine intersects
+// against the enabled targets that actually exist, so the rule simply has one
+// fewer recipient — and Validate then says so the next time somebody opens it.
+func (s *Store) DeleteTarget(ctx context.Context, id int64) error {
+	s.wmu.Lock()
+	defer s.wmu.Unlock()
+	if _, err := s.db.ExecContext(ctx,
+		`DELETE FROM notify_targets WHERE id = ?`, id); err != nil {
+		return fmt.Errorf("store: delete target %d: %w", id, err)
+	}
+	return nil
+}

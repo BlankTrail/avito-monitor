@@ -87,3 +87,50 @@ const (
 	UnitText    Unit = "text"
 	UnitSeconds Unit = "seconds"
 )
+
+// kindLabels is what a change kind is called on a screen.
+//
+// Beside Kinds() and not in the panel, because the two are one decision: a kind
+// added to the catalogue and forgotten here would appear in the rule editor's
+// dropdown as «watch-undersampled», which tells a Russian-speaking person
+// nothing at all. A test walks Kinds() and refuses a kind with no label.
+//
+// These are the noun forms — what the rule watches for — and not the sentences
+// internal/telegram builds, which describe one particular change and need the
+// change to do it.
+var kindLabels = map[Kind]string{
+	KindListingAppeared:   "появилось новое объявление",
+	KindListingReturned:   "объявление вернулось в выдачу",
+	KindListingLeftWindow: "объявление ушло из отслеживаемой части выдачи",
+	KindListingVanished:   "объявление пропало",
+	KindListingClosed:     "объявление снято с публикации",
+	KindListingReposted:   "объявление выложено заново",
+	KindRepostRetracted:   "связь между объявлениями отменена",
+
+	KindPriceChanged:     "цена изменилась",
+	KindPriceAppeared:    "у объявления появилась цена",
+	KindPriceWithdrawn:   "цену убрали",
+	KindDiscountChanged:  "скидка изменилась",
+	KindTitleChanged:     "заголовок изменён",
+	KindPromotionChanged: "продвижение включили или выключили",
+	KindReservedChanged:  "бронь появилась или снялась",
+	KindListingBumped:    "объявление подняли в выдаче",
+
+	KindExtractionFellBack:    "разбор пошёл по запасному пути",
+	KindTransportBlocked:      "сайт перестал отвечать",
+	KindCollectorShapeUnknown: "мы перестали понимать разметку",
+	KindCollectorSilent:       "наблюдение молчит",
+	KindWorkerPanicked:        "сборщик упал",
+	KindWatchUndersampled:     "наблюдение опрашивается слишком редко",
+	KindWatchTooBroad:         "наблюдение слишком широкое",
+}
+
+// Label is what a kind is called on a screen, falling back to the key so a kind
+// added without a label renders as something visible rather than as a blank
+// option nobody can pick.
+func Label(k Kind) string {
+	if s, ok := kindLabels[k]; ok {
+		return s
+	}
+	return string(k)
+}

@@ -65,3 +65,17 @@ func TestEveryKindIsSpelledInKebabCase(t *testing.T) {
 		}
 	}
 }
+
+// TestEveryKindHasARussianLabel.
+//
+// The rule editor draws its dropdown from Kinds(). A kind added to the
+// catalogue and forgotten in the labels would appear there as
+// «watch-undersampled», which tells a Russian-speaking person nothing — and the
+// only place that would be noticed is in front of one.
+func TestEveryKindHasARussianLabel(t *testing.T) {
+	for _, k := range Kinds() {
+		if Label(k) == string(k) {
+			t.Errorf("%s has no label", k)
+		}
+	}
+}
