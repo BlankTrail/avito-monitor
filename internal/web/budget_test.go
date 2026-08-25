@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/BlankTrail/avito-monitor/avito"
 	"github.com/BlankTrail/avito-monitor/internal/store"
 )
 
@@ -168,5 +169,26 @@ func TestARateReadsAsARussianNumber(t *testing.T) {
 		if got := num(c.v); got != c.want {
 			t.Errorf("num(%v) = %q, want %q", c.v, got, c.want)
 		}
+	}
+}
+
+// TestADesktopWatchCostsTwiceWhatAMobileOneDoes.
+//
+// The desktop search page answers with a shell carrying a canonical URL, and
+// the listings are on the page that URL names — so one page is two requests.
+// A budget that counted one would let somebody schedule twice what their
+// address can carry and learn the arithmetic as a ban.
+func TestADesktopWatchCostsTwiceWhatAMobileOneDoes(t *testing.T) {
+	mobile := store.Watch{Enabled: true, IntervalSec: 300, MaxPages: 2,
+		Surface: avito.SurfaceMobile}
+	desktop := mobile
+	desktop.Surface = avito.SurfaceDesktop
+
+	m, d := CostPerMinute(mobile), CostPerMinute(desktop)
+	if m <= 0 {
+		t.Fatalf("mobile costs %v", m)
+	}
+	if d != 2*m {
+		t.Errorf("desktop costs %v against mobile's %v, want double", d, m)
 	}
 }

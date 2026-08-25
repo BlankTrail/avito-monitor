@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/BlankTrail/avito-monitor/avito"
@@ -185,6 +186,40 @@ func NewFetcher(l Leaser, p *Pacer, cfg FetchConfig) *Fetcher {
 // solve in progress. Without one, halt — POST /web/N/firewallCaptcha/verify
 // needs an X-Cube header carrying a WebGL proof of work, and no amount of
 // retrying produces one.
+// canonical is where a redirect envelope points, resolved against the request
+// that produced it.
+//
+// Resolved and not concatenated: the shell states a path, and gluing an origin
+// onto it by hand is the kind of thing that works until the day the site states
+// an absolute URL or a protocol-relative one. net/url already knows the rules.
+//
+// A canonical that leaves the host is refused. Following one would take a
+// watch's budget somewhere its owner never pointed it, and this product has no
+// reason to read anything but Avito.
+func (f *Fetcher) canonical(from string, page avito.Page) (string, bool) {
+	if page.Kind != avito.EnvelopeRedirect || page.CanonicalURL == "" {
+		return "", false
+	}
+	base, err := url.Parse(from)
+	if err != nil {
+		return "", false
+	}
+	ref, err := url.Parse(page.CanonicalURL)
+	if err != nil {
+		return "", false
+	}
+	next := base.ResolveReference(ref)
+	if next.Host != base.Host {
+		return "", false
+	}
+	if next.String() == from {
+		// A shell whose canonical is itself. The one follow would be spent
+		// re-reading the same bytes.
+		return "", false
+	}
+	return next.String(), true
+}
+
 func (f *Fetcher) Fetch(ctx context.Context, target string) (Result, error) {
 	lease, err := f.leaser.Acquire(ctx)
 	if err != nil {
@@ -197,6 +232,8 @@ func (f *Fetcher) Fetch(ctx context.Context, target string) (Result, error) {
 	rotations := 0
 	burns := 0
 	softBlocks := 0
+	followed := 0
+	carried := 0
 
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		// Paced on the identity AND on the address. The second argument used to
@@ -209,7 +246,18 @@ func (f *Fetcher) Fetch(ctx context.Context, target string) (Result, error) {
 		res.Session, res.Label, res.Egress = lease.Session(), lease.Label(), lease.Egress()
 
 		status, body, doErr := f.once(ctx, lease, target)
-		res.Status, res.Bytes = status, len(body)
+		// carried is what earlier requests of this same answer already cost,
+		// and it is not the same thing as a retry.
+		//
+		// A retry REPLACES an attempt: the refused body was discarded and the
+		// pass it writes is about the reply it kept, so its size is assigned.
+		// A follow ADDS a request to one answer: the desktop shell and the
+		// page it points at are both spent and both belong to the pass. Left
+		// out, a two-request desktop pass would report the size of its second
+		// request — the same under-reporting this column already had once,
+		// when Body was dropped on success and every clean pass recorded zero.
+		res.Status = status
+		res.Bytes = carried + len(body)
 		if doErr != nil {
 			// A transport error is not a verdict about the target. One re-dial,
 			// then give up: a connection that will not open twice is not going
@@ -275,6 +323,28 @@ func (f *Fetcher) Fetch(ctx context.Context, target string) (Result, error) {
 
 		switch res.Verdict.Class {
 		case ClassOK, ClassEmpty:
+			// The desktop search page answers with a shell: no catalogue, one
+			// canonical URL, about 358 KB of nothing else. The spec says page
+			// one of that surface costs two requests, and this is the second.
+			// Without it a desktop watch collects zero — measured on live
+			// Avito on 25 August 2026, twice, byte for byte identical.
+			//
+			// The follow re-enters the loop rather than calling once() again,
+			// so it is paced, classified and remedied exactly like any other
+			// request. It IS another request against the same address, and a
+			// page that quietly cost two against a budget counted in one is
+			// how an address gets burned by arithmetic nobody did.
+			//
+			// One follow and no more. A shell pointing at a shell is a loop,
+			// and the site is under no obligation not to serve one; the second
+			// shell is returned as what it is, so zero listings from a
+			// redirect envelope stays visible rather than being retried away.
+			if next, ok := f.canonical(target, page); ok && followed == 0 {
+				followed++
+				carried = res.Bytes
+				target = next
+				continue
+			}
 			return res, nil
 
 		case ClassShape:
