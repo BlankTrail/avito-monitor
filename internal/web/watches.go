@@ -35,6 +35,10 @@ const minIntervalSec = 120
 const maxPagesPerPass = 10
 
 func (s *Server) watchesPage(w http.ResponseWriter, r *http.Request) {
+	// Mobile, and the reason is measured rather than preferred: the desktop
+	// search page is a shell that carries a canonical URL and no listings, and
+	// nothing in this product follows it. A desktop watch collects zero. See
+	// the form's own comment below.
 	s.renderWatches(w, r, "", store.Watch{Surface: avito.SurfaceMobile,
 		MaxPages: 1, IntervalSec: 300})
 }
@@ -165,28 +169,39 @@ func watchForm(d store.Watch) string {
 	b.WriteString(field("Страниц за проход", "pages",
 		strconv.Itoa(d.MaxPages), "number",
 		fmt.Sprintf("Один запрос на страницу. Не больше %d.", maxPagesPerPass)))
-	// The two surfaces are a real trade and the label used to state it
-	// backwards — it said mobile carried more cards, and mobile carries
-	// thirty against desktop's fifty. What mobile actually buys is one
-	// request per page instead of two and about a megabyte instead of
-	// two and a half, which is why it is still the first option: on a
-	// budget counted in requests it is the cheaper page, 30 listings per
-	// request against 25.
+	// The two surfaces, and the honest state of both.
 	//
-	// What it costs is measured in
-	// docs/measurements/2026-08-25-what-the-repost-ladder-can-see.md: the
-	// mobile payload carries no seller, no category, no location, no
-	// coordinates and no description — 0 of 30 on every one — so nothing
-	// downstream that needs them works on a mobile watch.
+	// The label once said mobile carried more cards. It carries thirty against
+	// desktop's fifty — that was simply backwards, and it was the only thing on
+	// this screen helping somebody choose.
+	//
+	// Increment 7A then made desktop the default, because the mobile payload
+	// carries no seller, no category, no location, no coordinates and no
+	// description (0 of 30, measured) and the repost ladder reads all of them.
+	// A live run took that back the same day: the desktop search page is a
+	// 358 KB shell carrying a canonical URL and no listings, and nothing in
+	// this product follows it. A desktop watch collects zero, and it collects
+	// zero after clearing a geetest challenge the mobile page never saw.
+	//
+	// So mobile is the default again, for the plainest possible reason: it is
+	// the only surface that collects anything. What it costs is stated below
+	// and recovered by «avitomon enrich», which reads a listing's own page —
+	// a canonical URL, not a shell — and does work.
 	b.WriteString(`<label class="field"><span class="label">Версия сайта</span>` +
 		`<select class="input" name="surface">` +
-		`<option value="mobile">мобильная — дешевле: один запрос на страницу, 30 объявлений</option>` +
-		`<option value="desktop">десктопная — два запроса на страницу, 50 объявлений, ` +
-		`но только она несёт продавца</option>` +
+		fmt.Sprintf(`<option value="mobile"%s>мобильная — один запрос на `+
+			`страницу, 30 объявлений</option>`,
+			selected(d.Surface != avito.SurfaceDesktop)) +
+		fmt.Sprintf(`<option value="desktop"%s>десктопная — пока не собирает: `+
+			`страница выдачи отдаёт только оболочку</option>`,
+			selected(d.Surface == avito.SurfaceDesktop)) +
 		`</select>` +
-		`<span class="hint">Мобильная выдача не отдаёт ни продавца, ни категорию, ` +
-		`ни координаты, ни описание. Всё, что на них опирается, на таком ` +
-		`наблюдении не работает.</span></label>`)
+		`<span class="hint">Мобильная выдача не отдаёт ни продавца, ни ` +
+		`категорию, ни координаты, ни описание. Перевыкладки по таким ` +
+		`объявлениям не связываются, пока продавец неизвестен; дополнить ` +
+		`можно командой «avitomon enrich» — по одному запросу на ` +
+		`объявление.</span>` +
+		`</label>`)
 	b.WriteString(`<button class="primary" type="submit">Добавить</button>`)
 	b.WriteString(`</form></div>`)
 	return b.String()

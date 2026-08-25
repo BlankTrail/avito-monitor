@@ -272,6 +272,29 @@ func classLabel(c string) string {
 	return c
 }
 
+// sellerCoverage is how much of the collection the repost ladder can read.
+//
+// A shipped metric and not a debugging aid: the seller is the ladder's one hard
+// gate, and a listing without one can never be linked. All three numbers or
+// none — «412 ждут» means nothing without «из 12 000».
+func (s *Server) sellerCoverage(ctx context.Context) string {
+	waiting, keyed, total, err := s.Store.EnrichmentQueue(ctx)
+	if err != nil || total == 0 {
+		return ""
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, `<p class="sum">Продавец известен у <strong>%d</strong> `+
+		`%s из %d.</p>`,
+		keyed, esc(ru.Plural(keyed, "объявления", "объявлений", "объявлений")), total)
+	if waiting > 0 {
+		fmt.Fprintf(&b, `<p class="hint">У %d продавца нет — это те, что собраны `+
+			`с мобильной выдачи: она его не отдаёт. Перевыкладки по ним `+
+			`не связываются. Дополнить: <code>avitomon enrich</code>, `+
+			`по одному запросу на объявление.</p>`, waiting)
+	}
+	return b.String()
+}
+
 func (s *Server) volumeCard(ctx context.Context) string {
 	v, err := s.Store.Volume(ctx)
 	if err != nil {
@@ -287,6 +310,7 @@ func (s *Server) volumeCard(ctx context.Context) string {
 	b.WriteString(`<div class="card"><h2>База</h2>`)
 	fmt.Fprintf(&b, `<p class="sum">Файл занимает <strong>%s МБ</strong>.</p>`,
 		esc(num(float64(v.FileBytes)/(1<<20))))
+	b.WriteString(s.sellerCoverage(ctx))
 	b.WriteString(`<table><tr><th>Таблица</th><th class="num">Строк</th></tr>`)
 	for _, n := range names {
 		fmt.Fprintf(&b, `<tr><td>%s</td><td class="num">%d</td></tr>`,

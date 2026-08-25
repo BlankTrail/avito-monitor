@@ -231,31 +231,95 @@ func insertPass(ctx context.Context, tx *sql.Tx, p Pass, itemsSeen, arrivals int
 // was made against. A blanket update is how both rules get lost in a later
 // edit.
 func upsertListing(ctx context.Context, tx *sql.Tx, l avito.Listing, p Pass) error {
-	// state and state_at are left at 'active' as of this sighting and are not
-	// touched on conflict. The lifecycle owns them from increment 4 onward —
-	// a listing seen in a pass is active by definition, but a listing that has
-	// since been marked vanished must not be quietly revived by an upsert that
-	// happened to run. Its return is a change, and changes are computed rather
-	// than assumed.
-	_, err := tx.ExecContext(ctx, `
+	// Before the listing, because listings.seller_id references sellers(id).
+	sellerID, err := upsertSeller(ctx, tx, l, p.StartedAt)
+	if err != nil {
+		return err
+	}
+	var seller any
+	if sellerID != 0 {
+		seller = sellerID
+	}
+
+	// No price here: prices move, and they live in listing_snapshots. What is
+	// here is the stable half plus the three derived values the repost ladder
+	// reads. Until increment 7A this wrote nine of these columns; the other
+	// twenty-one were declared in migration 0001 and filled by nobody.
+	_, err = tx.ExecContext(ctx, `
 		INSERT INTO listings
-		  (item_id, thread_id, url_path, title, first_seen_at, last_seen_at,
-		   state, state_at, discovered_seed, first_watch_id)
-		VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?, ?)
+		  (item_id, thread_id, url_path, title, title_norm,
+		   category_id, category_root_id, micro_category_id,
+		   location_id, location_name, geo_address, lat, lng, coords_precise,
+		   seller_id, sort_ts_ms, allow_ts_ms,
+		   repost_key, description_sha, image_key,
+		   first_seen_at, last_seen_at, state, state_at,
+		   discovered_seed, first_watch_id)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+		        ?, ?, 'active', ?, ?, ?)
 		ON CONFLICT(item_id) DO UPDATE SET
 		    url_path     = excluded.url_path,
 		    title        = excluded.title,
-		    last_seen_at = excluded.last_seen_at`,
-		// thread_id is the listing's own id until the repost linker in a later
-		// increment merges two listings into one thread. Seeding it to item_id
-		// rather than to zero means every listing is already in a thread of
-		// one, and linking is then a repoint rather than a backfill.
-		l.ItemID, l.ItemID, l.URLPath, l.Title,
+		    title_norm   = excluded.title_norm,
+		    last_seen_at = excluded.last_seen_at,
+		    -- Everything below fills a hole and never overwrites a fact. A
+		    -- later pass that read less than an earlier one must not erase
+		    -- what the earlier one read: the mobile surface carries none of
+		    -- these, and a listing in two watches is read from both. A blanket
+		    -- update would let the cheaper page wipe the richer one's work
+		    -- every other pass.
+		    location_name = CASE WHEN excluded.location_name = ''
+		                         THEN listings.location_name
+		                         ELSE excluded.location_name END,
+		    geo_address   = CASE WHEN excluded.geo_address = ''
+		                         THEN listings.geo_address
+		                         ELSE excluded.geo_address END,
+		    category_id       = max(listings.category_id, excluded.category_id),
+		    category_root_id  = max(listings.category_root_id, excluded.category_root_id),
+		    micro_category_id = max(listings.micro_category_id, excluded.micro_category_id),
+		    location_id       = max(listings.location_id, excluded.location_id),
+		    lat            = coalesce(listings.lat, excluded.lat),
+		    lng            = coalesce(listings.lng, excluded.lng),
+		    coords_precise = max(listings.coords_precise, excluded.coords_precise),
+		    sort_ts_ms     = coalesce(listings.sort_ts_ms, excluded.sort_ts_ms),
+		    allow_ts_ms    = coalesce(listings.allow_ts_ms, excluded.allow_ts_ms),
+		    seller_id      = coalesce(listings.seller_id, excluded.seller_id),
+		    description_sha = CASE WHEN excluded.description_sha = ''
+		                           THEN listings.description_sha
+		                           ELSE excluded.description_sha END,
+		    image_key       = CASE WHEN excluded.image_key = ''
+		                           THEN listings.image_key
+		                           ELSE excluded.image_key END,
+		    -- repost_key is the one exception to «fill a hole», and it is the
+		    -- schema's own rule: written once and never updated, so a title
+		    -- edited after a link was made cannot move the key that link was
+		    -- made against. It fills an empty key and never replaces one.
+		    --
+		    -- title and title_norm above DO update, and that is not a
+		    -- contradiction: they are what a person reads and searches. Only
+		    -- the key is frozen, because only the key is what a link points at.
+		    repost_key = CASE WHEN listings.repost_key = ''
+		                      THEN excluded.repost_key
+		                      ELSE listings.repost_key END`,
+		// thread_id is the listing's own id until the repost linker merges two
+		// listings into one thread. Seeding it to item_id rather than to zero
+		// means every listing is already in a thread of one, and linking is
+		// then a repoint rather than a backfill.
+		l.ItemID, l.ItemID, l.URLPath, l.Title, avito.FoldTitle(l.Title),
+		l.CategoryID, l.CategoryRootID, l.MicroCategoryID,
+		l.LocationID, l.LocationName, l.GeoAddress, l.Lat, l.Lng, l.CoordsPrecise,
+		seller, l.SortTimeMS, l.AllowTimeMS,
+		avito.RepostKey(l), avito.DescriptionSHA(l.Description), l.ImageKey,
+		// state and state_at are left at 'active' as of this sighting and are
+		// not touched on conflict. The lifecycle owns them from increment 4
+		// onward — a listing seen in a pass is active by definition, but one
+		// since marked vanished must not be quietly revived by an upsert that
+		// happened to run. Its return is a change, and changes are computed
+		// rather than assumed.
 		p.StartedAt, p.StartedAt, p.StartedAt, p.IsSeed, p.WatchID)
 	if err != nil {
 		return fmt.Errorf("store: save pass: listings: %w", err)
 	}
-	return nil
+	return maybeSellerSnapshot(ctx, tx, sellerID, l, p.StartedAt)
 }
 
 // maybeSnapshot writes a row only when the fingerprint moved or an anchor is

@@ -4,6 +4,7 @@ package avito
 
 import (
 	"encoding/json"
+	"math"
 	"strconv"
 	"strings"
 )
@@ -263,6 +264,7 @@ type stateItem struct {
 	Contacts             *struct {
 		Delivery bool `json:"delivery"`
 	} `json:"contacts"`
+	Images   []map[string]string `json:"images"`
 	UserLogo *struct {
 		Link string `json:"link"`
 	} `json:"userLogo"`
@@ -277,6 +279,18 @@ type stateItem struct {
 				Value string `json:"value"`
 			} `json:"payload"`
 		} `json:"SecondLineStep"`
+		UserInfoStep []struct {
+			Payload struct {
+				Profile struct {
+					Link  string `json:"link"`
+					Title string `json:"title"`
+				} `json:"profile"`
+				Rating struct {
+					Score   float64 `json:"score"`
+					Summary string  `json:"summary"`
+				} `json:"rating"`
+			} `json:"payload"`
+		} `json:"UserInfoStep"`
 	} `json:"iva"`
 }
 
@@ -325,9 +339,26 @@ func decodeStateListing(raw json.RawMessage, rep *ExtractionReport) (Listing, bo
 		d := it.Contacts.Delivery
 		l.HasDelivery = &d
 	}
-	if it.UserLogo != nil && it.UserLogo.Link != "" {
-		if slug := brandSlug(it.UserLogo.Link); slug != "" {
-			l.SellerKey = "brand:" + slug
+	// The first photo only. A listing's identity is not the set of its photos —
+	// a seller who re-uploads may reorder or drop some — and the first is the
+	// one both incarnations are most likely to share. Taking all of them would
+	// mean deciding what a partial overlap means, and this signal is far too
+	// weak to carry that judgement.
+	if len(it.Images) > 0 {
+		variants := make([]string, 0, len(it.Images[0]))
+		for _, url := range it.Images[0] {
+			variants = append(variants, url)
+		}
+		l.ImageKey = ImageKey(variants)
+	}
+	// Two spellings, and the order between them is a decision. The brand link
+	// is on about nine rows in ten; the profile is on four in ten and carries
+	// the name and the rating besides. So the brand link wins on being the more
+	// available one, and the profile is read for everything else it holds.
+	if it.UserLogo != nil {
+		if key, quality := sellerKeyFromLink(it.UserLogo.Link); key != "" {
+			l.SellerKey, l.SellerKeyQuality = key, quality
+			l.SellerProfilePath = trimQuery(it.UserLogo.Link)
 		}
 	}
 	if it.IVA != nil {
@@ -337,6 +368,26 @@ func decodeStateListing(raw json.RawMessage, rep *ExtractionReport) (Listing, bo
 		if len(it.IVA.SecondLineStep) > 0 && it.IVA.SecondLineStep[0].Payload.Value == "Компания" {
 			yes := true
 			l.IsCompany = &yes
+		}
+		if len(it.IVA.UserInfoStep) > 0 {
+			p := it.IVA.UserInfoStep[0].Payload
+			if l.SellerKey == "" {
+				if key, quality := sellerKeyFromLink(p.Profile.Link); key != "" {
+					l.SellerKey, l.SellerKeyQuality = key, quality
+					l.SellerProfilePath = trimQuery(p.Profile.Link)
+				}
+			}
+			if p.Profile.Title != "" {
+				l.SellerName = p.Profile.Title
+			}
+			if p.Rating.Score > 0 {
+				// Rounded and not truncated: 4.9 in float64 is 4.899999…, and
+				// truncating would file every seller a hundredth low for ever
+				// — a systematic error that looks like data.
+				h := int64(math.Round(p.Rating.Score * 100))
+				l.SellerRatingHundredths = &h
+			}
+			l.SellerReviewSummary = p.Rating.Summary
 		}
 	}
 	if pd := it.PriceDetailed; pd != nil {
@@ -380,6 +431,41 @@ func trimQuery(p string) string {
 }
 
 // brandSlug reads the slug out of "/brands/<slug>?...".
+// sellerKeyFromLink turns a profile path into a key and says how it got it.
+//
+// Two shapes and no others. "/brands/<slug>" is a company's own page and
+// "/user/<hash>/profile" is a private seller's. Anything else yields nothing at
+// all rather than a guess: inventing an identity that silently merges two
+// people is worse than declining to identify either, and the schema's
+// key_quality has no value meaning "we made this up".
+//
+// The two are not one identity, which is why the surrogate id in `sellers`
+// exists: a private seller who changes their profile path forks into two rows,
+// and the fork is repaired later by repointing listings.seller_id rather than
+// by rewriting every table that names a seller.
+func sellerKeyFromLink(link string) (key, quality string) {
+	if link == "" {
+		return "", ""
+	}
+	if slug := brandSlug(link); slug != "" {
+		return "brand:" + slug, "slug"
+	}
+	const userPrefix = "/user/"
+	if strings.HasPrefix(link, userPrefix) {
+		// The query carries a per-listing iid; left in, one seller would get a
+		// different key on every listing and the repost key would never bucket
+		// two of their listings together.
+		rest := trimQuery(strings.TrimPrefix(link, userPrefix))
+		if i := strings.IndexByte(rest, '/'); i >= 0 {
+			rest = rest[:i]
+		}
+		if rest != "" {
+			return "user:" + rest, "profile"
+		}
+	}
+	return "", ""
+}
+
 func brandSlug(link string) string {
 	const prefix = "/brands/"
 	if !strings.HasPrefix(link, prefix) {

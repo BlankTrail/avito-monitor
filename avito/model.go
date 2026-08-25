@@ -75,13 +75,33 @@ type Listing struct {
 	DiscountPct               *int64
 	WasLowered                bool
 
-	SellerKey  string // "brand:<slug>" or "" when the row does not identify one
+	SellerKey  string // "brand:<slug>", "user:<hash>", or "" when the row identifies none
 	SellerName string
 	IsCompany  *bool
+	// SellerKeyQuality records how the key was obtained: "slug" from a brand
+	// link, "profile" from a private seller's profile path, "" when there is
+	// no key. Not decoration — a heuristic key is never accepted as repost
+	// evidence, and that rule can only be enforced if the quality travelled
+	// with the key.
+	SellerKeyQuality string
+	// SellerProfilePath is the path the key came from, verbatim, so a person
+	// can go and look at the seller this row named.
+	SellerProfilePath string
+
+	// The seller's reputation as this row stated it. Hundredths of a point,
+	// matching track.UnitRatingHundredths, so «fell by more than 0.2» is an
+	// integer comparison — the same arithmetic as a price in kopecks.
+	SellerRatingHundredths *int64
+	SellerReviewSummary    string
 
 	Description string
 
-	ImagesCount   *int64
+	ImagesCount *int64
+	// ImageKey is the identity of the listing's first photo, shared by its six
+	// size variants. Empty on the mobile surface, which carries no images at
+	// all — see
+	// docs/measurements/2026-08-25-what-the-repost-ladder-can-see.md.
+	ImageKey      string
 	IsXL          *bool // an XL promotion placement
 	IsReMap       *bool
 	IsVerified    *bool
