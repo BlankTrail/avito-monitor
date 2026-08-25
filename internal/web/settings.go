@@ -227,7 +227,7 @@ func (s *Server) saveSettings(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	if r.FormValue("password_clear") == "1" {
+	if ticked(r, "password_clear") {
 		panel.PasswordHash = ""
 	} else if v := r.FormValue("password"); v != "" {
 		hash, err := HashPassword(v)
@@ -237,8 +237,8 @@ func (s *Server) saveSettings(w http.ResponseWriter, r *http.Request) {
 			panel.PasswordHash = hash
 		}
 	}
-	panel.LAN = r.FormValue("lan") == "1"
-	panel.Autostart = r.FormValue("autostart") == "1"
+	panel.LAN = ticked(r, "lan")
+	panel.Autostart = ticked(r, "autostart")
 	if panel.LAN && panel.PasswordHash == "" {
 		// Refused here as well as at the port. ListenAddress is the guarantee;
 		// this is what stops a person ticking the box, restarting, and finding
@@ -279,7 +279,7 @@ func (s *Server) saveSettings(w http.ResponseWriter, r *http.Request) {
 
 // secretFrom applies the three-way rule: clear, replace, or leave alone.
 func secretFrom(r *http.Request, name, current string) string {
-	if r.FormValue(name+"_clear") == "1" {
+	if ticked(r, name+"_clear") {
 		return ""
 	}
 	if v := strings.TrimSpace(r.FormValue(name)); v != "" {
