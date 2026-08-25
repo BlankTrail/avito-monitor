@@ -164,6 +164,10 @@ func (s *Server) Handler() http.Handler {
 
 	mux.Handle("GET /health", s.auth(http.HandlerFunc(s.healthPage)))
 
+	mux.Handle("GET /results", s.auth(http.HandlerFunc(s.resultsPage)))
+	mux.Handle("GET /results/table", s.auth(http.HandlerFunc(s.resultsFragment)))
+	mux.Handle("GET /results/export", s.auth(http.HandlerFunc(s.exportResults)))
+
 	mux.Handle("GET /history", s.auth(http.HandlerFunc(s.historyPage)))
 	mux.Handle("GET /history/chart", s.auth(http.HandlerFunc(s.historyChart)))
 
@@ -232,12 +236,12 @@ func (s *Server) ListenAddress(ctx context.Context, port int, lan bool) (string,
 
 // tabs is the header navigation.
 //
-// Four after 6B. Правила and Результаты
-// arrive with 6C; a tab that answers 404 is a tab a person clicks once and stops
-// trusting, so they are added when their screens are.
+// Правила arrives with Task 6. A tab that answers 404 is a tab a person clicks
+// once and stops trusting, so each is added when its screen is.
 func (s *Server) tabs(path string) []Tab {
 	out := []Tab{
 		{Label: "Наблюдения", Href: "/"},
+		{Label: "Результаты", Href: "/results"},
 		{Label: "Здоровье сбора", Href: "/health"},
 		{Label: "История", Href: "/history"},
 		{Label: "Прокси", Href: "/channels"},
