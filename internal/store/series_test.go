@@ -181,10 +181,10 @@ func TestSeriesRefusesToCompareAcrossSurfaces(t *testing.T) {
 
 // TestSaturationSaysWhetherTheIntervalIsShortEnough.
 //
-// items_on_page / arrivals. If a watch of thirty slots takes thirty new
-// listings every pass, the window turned over completely between polls and the
-// watch is blind to whatever passed through in between — it is sampling the
-// market rather than measuring it.
+// items_on_page / arrivals, and below two the watch is losing listings between
+// polls. A watch whose window turns over completely every pass scores one: it
+// is blind to whatever passed through in between, and it is sampling the market
+// rather than measuring it.
 func TestSaturationSaysWhetherTheIntervalIsShortEnough(t *testing.T) {
 	s := openTemp(t)
 	ctx := context.Background()
@@ -208,15 +208,22 @@ func TestSaturationSaysWhetherTheIntervalIsShortEnough(t *testing.T) {
 	if !ok {
 		t.Fatal("Saturation reported no answer with three passes to read")
 	}
-	if ratio < 0.99 {
+	if ratio < 0.99 || ratio > 1.01 {
 		t.Errorf("saturation = %v, want about 1.0 — every pass turned over "+
-			"completely", ratio)
+			"completely, which is the alarming end of the scale", ratio)
 	}
 }
 
-// TestAQuietWatchHasLowSaturation, which is the healthy state: the window
-// barely moves between polls, so nothing goes through unseen.
-func TestAQuietWatchHasLowSaturation(t *testing.T) {
+// TestAQuietWatchHasNothingToMeasureRatherThanAZero.
+//
+// The spec is explicit: zero arrivals across the whole window is not a division
+// by zero and not an alarm — it is a quiet query, reported as having nothing to
+// measure rather than as a ratio, because a metric that invents a number where
+// it has no data is worse than one that says it has none.
+//
+// A zero here would read as «below two», which is precisely the opposite of the
+// truth: nothing arrived, so nothing was missed.
+func TestAQuietWatchHasNothingToMeasureRatherThanAZero(t *testing.T) {
 	s := openTemp(t)
 	ctx := context.Background()
 	wid, _ := s.AddWatch(ctx, aWatch())
@@ -227,15 +234,44 @@ func TestAQuietWatchHasLowSaturation(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	// The seed's arrivals are excluded with it, so this reads three passes in
+	// which nothing arrived at all.
+	ratio, ok, err := s.Saturation(ctx, wid, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok {
+		t.Errorf("saturation = %v on a watch where nothing arrived; want no answer", ratio)
+	}
+}
+
+// TestARoomyWindowScoresHigh, which is the healthy end: many slots per arrival
+// means nothing goes through between polls unseen.
+func TestARoomyWindowScoresHigh(t *testing.T) {
+	s := openTemp(t)
+	ctx := context.Background()
+	wid, _ := s.AddWatch(ctx, aWatch())
+
+	// The seed carries six, then one new listing arrives per pass into a window
+	// that keeps holding six.
+	if _, err := s.SavePass(ctx, aPass(wid, 1000), listingsFor(1, 2, 3, 4, 5, 6)); err != nil {
+		t.Fatal(err)
+	}
+	for i, ids := range [][]int64{
+		{1, 2, 3, 4, 5, 7}, {1, 2, 3, 4, 5, 8}, {1, 2, 3, 4, 5, 9},
+	} {
+		at := 1300 + int64(i)*300
+		if _, err := s.SavePass(ctx, aPass(wid, at), listingsFor(ids...)); err != nil {
+			t.Fatal(err)
+		}
+	}
 	ratio, ok, err := s.Saturation(ctx, wid, 3)
 	if err != nil || !ok {
 		t.Fatalf("Saturation: %v ok=%v", err, ok)
 	}
-	// The seed's arrivals are excluded with it, so this reads three passes in
-	// which nothing arrived at all.
-	if ratio > 0.4 {
-		t.Errorf("saturation = %v on a watch where nothing moved after the "+
-			"seed, want well under half", ratio)
+	if ratio < 2 {
+		t.Errorf("saturation = %v with six slots and one arrival a pass; "+
+			"below two is the alarm and this window is roomy", ratio)
 	}
 }
 

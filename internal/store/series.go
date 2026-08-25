@@ -200,15 +200,22 @@ func setWatermarkTx(ctx context.Context, tx *sql.Tx, v int64) error {
 	return nil
 }
 
-// Saturation is how much of this watch's window turns over between polls.
+// Saturation is how many slots the window has per arrival.
 //
-// items_on_page / arrivals, over the last n passes. If a watch of thirty slots
-// takes thirty new listings every pass the ratio is one: the window turned over
-// completely between polls, and the watch is blind to whatever went through in
-// between. It is sampling the market rather than measuring it, and the remedy
-// is a shorter interval or a narrower query.
+// items_on_page / arrivals, over the last n admissible passes. The spec's
+// orientation and not its reciprocal, and the difference is the whole reading:
+// **below two the watch is losing listings between polls.** A watch of thirty
+// slots taking thirty new listings every pass scores one — the window turned
+// over completely, and the watch is blind to whatever went through in between.
+// The same watch taking three scores ten, and sees everything.
 //
-// The bool is false when fewer than n admissible passes exist. A ratio over one
+// Zero arrivals is not a division and not an alarm. It is a quiet query, and
+// the bool is false so the caller says «нечего измерять» rather than showing a
+// ratio: the spec is explicit that a metric inventing a number where it has no
+// data is worse than one that says it has none — and a zero here would read as
+// «below two», which is the opposite of the truth.
+//
+// The bool is also false with fewer than n admissible passes. A ratio over one
 // pass is noise, and this is a number a person acts on.
 func (s *Store) Saturation(ctx context.Context, watchID int64, n int) (float64, bool, error) {
 	var passes int
@@ -223,8 +230,8 @@ func (s *Store) Saturation(ctx context.Context, watchID int64, n int) (float64, 
 	if err != nil {
 		return 0, false, fmt.Errorf("store: saturation: %w", err)
 	}
-	if passes < n || items.Int64 == 0 {
+	if passes < n || arrivals.Int64 == 0 {
 		return 0, false, nil
 	}
-	return float64(arrivals.Int64) / float64(items.Int64), true, nil
+	return float64(items.Int64) / float64(arrivals.Int64), true, nil
 }
