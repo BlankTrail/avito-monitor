@@ -164,6 +164,9 @@ func (s *Server) Handler() http.Handler {
 
 	mux.Handle("GET /health", s.auth(http.HandlerFunc(s.healthPage)))
 
+	mux.Handle("GET /history", s.auth(http.HandlerFunc(s.historyPage)))
+	mux.Handle("GET /history/chart", s.auth(http.HandlerFunc(s.historyChart)))
+
 	mux.Handle("GET /channels", s.auth(http.HandlerFunc(s.channelsPage)))
 	mux.Handle("POST /channels", s.auth(http.HandlerFunc(s.saveChannel)))
 	mux.Handle("POST /channels/delete", s.auth(http.HandlerFunc(s.deleteChannel)))
@@ -236,12 +239,18 @@ func (s *Server) tabs(path string) []Tab {
 	out := []Tab{
 		{Label: "Наблюдения", Href: "/"},
 		{Label: "Здоровье сбора", Href: "/health"},
+		{Label: "История", Href: "/history"},
 		{Label: "Прокси", Href: "/channels"},
 		{Label: "Настройки", Href: "/settings"},
 	}
 	claimed := false
 	for i := range out {
-		out[i].Active = out[i].Href == path
+		// A prefix and not an equality, because История is reached as
+		// /history?thread=100 and its chart as /history/chart. A person who
+		// followed a link into a chart and sees «Наблюдения» highlighted has
+		// been told they are somewhere they are not.
+		out[i].Active = out[i].Href == path ||
+			(out[i].Href != "/" && strings.HasPrefix(path, out[i].Href))
 		claimed = claimed || out[i].Active
 	}
 	// The first tab is active for anything not otherwise claimed, so a screen
