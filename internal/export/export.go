@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"iter"
+	"strconv"
 	"strings"
 )
 
@@ -248,4 +249,57 @@ func optTime(ts int64) Value {
 		return Value{Absent: true}
 	}
 	return Value{Unix: ts}
+}
+
+// columnHeaders is what a person reads: the field's name.
+func columnHeaders(cols []Field) []string {
+	out := make([]string, len(cols))
+	for i, f := range cols {
+		out[i] = f.Name
+	}
+	return out
+}
+
+// columnKeys is what a program reads: the field's key.
+//
+// JSON and JSONL use it. It is the half fields.go promises not to change
+// between releases, while a name moves with the interface's wording.
+func columnKeys(cols []Field) []string {
+	out := make([]string, len(cols))
+	for i, f := range cols {
+		out[i] = f.Key
+	}
+	return out
+}
+
+// formatMoney renders minor units with the chosen decimal separator.
+//
+// Lifted from the donor unchanged, negation included. Negated through an
+// unsigned magnitude: Go defines signed overflow as two's-complement
+// wraparound, so -minor would in fact give the right bits even for
+// math.MinInt64 — this is not a correctness fix. It is written this way because
+// the magnitude is what the digits are taken from, and naming it as unsigned
+// says so; the reader does not have to know the wraparound rule to see that the
+// loop cannot produce a negative digit.
+//
+// Always two decimals. A price of forty thousand roubles exactly is «40000.00»
+// and not «40000», because a column where some cells have decimals and some do
+// not is a column a spreadsheet reads as text.
+func formatMoney(minor int64, decimal rune) string {
+	neg := minor < 0
+	u := uint64(minor)
+	if neg {
+		u = uint64(-(minor + 1)) + 1
+	}
+
+	var b strings.Builder
+	if neg {
+		b.WriteByte('-')
+	}
+	b.WriteString(strconv.FormatUint(u/100, 10))
+	b.WriteRune(decimal)
+	frac := u % 100
+	b.WriteByte(byte('0' + frac/10))
+	b.WriteByte(byte('0' + frac%10))
+	return b.String()
 }
