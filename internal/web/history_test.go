@@ -97,7 +97,9 @@ func TestThePageLinksTheChartAndNamesTheThread(t *testing.T) {
 	s := newServer(t)
 	id := aWatch(t, s, "наблюдение")
 	aListing(t, s, 100, 100, "iPhone 15, 128 ГБ", 1_700_000_000)
+	// Two, because one price is shown as a price rather than as a chart.
 	aSnapshot(t, s, 100, 1_700_000_000, "exact", 4_000_000)
+	aSnapshot(t, s, 100, 1_700_003_600, "exact", 3_900_000)
 	aMember(t, s, id, 100)
 
 	body := get(t, s, "/history?thread=100").Body.String()
@@ -194,5 +196,63 @@ func TestAThreadTitleIsEscaped(t *testing.T) {
 	if strings.Contains(get(t, s, "/history?thread=100").Body.String(),
 		"<script>alert(1)</script>") {
 		t.Error("a seller's title was rendered as markup")
+	}
+}
+
+// TestOnePriceIsShownAsAPriceAndNotAsABrokenImage.
+//
+// Found by running it: after a single pass every thread has exactly one
+// snapshot, chart.Encode answers ErrNoData for a series it cannot span, and the
+// page hung a broken <img> under a real heading. There IS data — one reading —
+// and a broken image is never the right way to say «one».
+func TestOnePriceIsShownAsAPriceAndNotAsABrokenImage(t *testing.T) {
+	s := newServer(t)
+	id := aWatch(t, s, "наблюдение")
+	aListing(t, s, 100, 100, "iPhone 15", 1_700_000_000)
+	aSnapshot(t, s, 100, 1_700_000_000, "exact", 4_000_000)
+	aMember(t, s, id, 100)
+
+	body := get(t, s, "/history?thread=100").Body.String()
+	if strings.Contains(body, "<img") {
+		t.Error("the page hangs an img on a thread with one point")
+	}
+	if !strings.Contains(body, "40\u00a0000 ₽") {
+		t.Errorf("the one price is not shown: %s", body)
+	}
+	if !strings.Contains(body, "одна цена") {
+		t.Errorf("the page does not say why there is no chart: %s", body)
+	}
+}
+
+// TestTwoPricesDoGetAChart, so the guard above is about «one» and not about
+// «any».
+func TestTwoPricesDoGetAChart(t *testing.T) {
+	s := newServer(t)
+	id := aWatch(t, s, "наблюдение")
+	aListing(t, s, 100, 100, "iPhone 15", 1_700_000_000)
+	aSnapshot(t, s, 100, 1_700_000_000, "exact", 4_000_000)
+	aSnapshot(t, s, 100, 1_700_003_600, "exact", 3_500_000)
+	aMember(t, s, id, 100)
+
+	if !strings.Contains(get(t, s, "/history?thread=100").Body.String(), "<img") {
+		t.Error("a thread with two points got no chart")
+	}
+}
+
+// TestAThreadWithNoPriceAtAllSaysThatInstead, which is a different sentence
+// from «one price»: nothing was ever a number here.
+func TestAThreadWithNoPriceAtAllSaysThatInstead(t *testing.T) {
+	s := newServer(t)
+	id := aWatch(t, s, "наблюдение")
+	aListing(t, s, 100, 100, "договорная", 1_700_000_000)
+	aSnapshot(t, s, 100, 1_700_000_000, "negotiable", 0)
+	aMember(t, s, id, 100)
+
+	body := get(t, s, "/history?thread=100").Body.String()
+	if strings.Contains(body, "<img") {
+		t.Error("a thread whose price was never a number got a chart")
+	}
+	if !strings.Contains(body, "цена ни разу не была числом") {
+		t.Errorf("body = %q", body)
 	}
 }

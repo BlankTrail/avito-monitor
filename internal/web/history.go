@@ -28,6 +28,41 @@ import (
 // inline — puts a hundred kilobytes of base64 into every page load and into the
 // browser's history.
 
+// rubles renders kopecks the way the notifier does.
+//
+// The same shape as internal/telegram's, including the non-breaking separator:
+// «40 000» wrapped after the 40 is a listing that appears to cost forty roubles.
+// Not shared with it, because that package renders whole messages and this
+// needs one number — an import for six lines would tie a screen to a notifier.
+func rubles(minor int64) string {
+	whole, frac := minor/100, minor%100
+	if frac < 0 {
+		frac = -frac
+	}
+	out := groupThousands(whole)
+	if frac != 0 {
+		out += fmt.Sprintf(",%02d", frac)
+	}
+	return out + " ₽"
+}
+
+func groupThousands(v int64) string {
+	s := strconv.FormatInt(v, 10)
+	neg := strings.HasPrefix(s, "-")
+	s = strings.TrimPrefix(s, "-")
+	var b strings.Builder
+	for i, r := range s {
+		if i > 0 && (len(s)-i)%3 == 0 {
+			b.WriteString(" ")
+		}
+		b.WriteRune(r)
+	}
+	if neg {
+		return "-" + b.String()
+	}
+	return b.String()
+}
+
 // chartMaxGap is how long a silence has to be before the line breaks.
 //
 // Six hours. The number is the caller's knowledge and not the chart's: only
@@ -98,9 +133,31 @@ func chartCard(series store.ThreadSeries) string {
 		fmt.Fprintf(&b, `<p><a href="https://www.avito.ru%s" rel="noreferrer">`+
 			`Открыть на Авито</a></p>`, attr(series.URLPath))
 	}
-	fmt.Fprintf(&b, `<p><img src="/history/chart?thread=%d" alt="%s" `+
-		`style="max-width:100%%"></p>`,
-		series.ThreadID, attr("График цены: "+title))
+
+	// A chart needs two points to be a line, and the page knows how many it
+	// has. Hanging an <img> on fewer and letting it 404 puts a broken image
+	// under a real heading — which is what a first pass produces for every
+	// listing, because an unchanged fingerprint writes no second snapshot.
+	priced := make([]store.PricePoint, 0, len(series.Points))
+	for _, p := range series.Points {
+		if p.Present {
+			priced = append(priced, p)
+		}
+	}
+	switch {
+	case len(priced) == 0:
+		b.WriteString(note("neutral",
+			"За всё время наблюдения цена ни разу не была числом — "+
+				"либо продавец указал «договорная», либо её не удалось прочитать."))
+	case len(priced) == 1:
+		fmt.Fprintf(&b, `<p class="sum">Пока одна цена: <strong>%s</strong>. `+
+			`График появится, когда будет вторая.</p>`,
+			esc(rubles(priced[0].Minor)))
+	default:
+		fmt.Fprintf(&b, `<p><img src="/history/chart?thread=%d" alt="%s" `+
+			`style="max-width:100%%"></p>`,
+			series.ThreadID, attr("График цены: "+title))
+	}
 	b.WriteString(`</div>`)
 	return b.String()
 }
