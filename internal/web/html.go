@@ -69,6 +69,29 @@ func checkbox(label, name string, on bool, hint string) string {
 	return b.String()
 }
 
+// ticked reads a checkbox that checkbox() wrote, and it is the other half of
+// that function.
+//
+// Last value and not the first, which is the whole point. checkbox() emits a
+// hidden "0" before the box so that unticking posts something — otherwise a
+// form read field by field cannot tell «unticked» from «this build has no such
+// field», and the second must never turn a setting off. But a ticked box then
+// posts both, in that order, and r.FormValue returns the *first* — so every
+// checkbox on this panel read that way was permanently off, whatever the person
+// clicked. Last-wins is the convention every other form processor uses for
+// exactly this pair, and it is what makes the hidden companion work as
+// intended rather than as a floor.
+func ticked(r *http.Request, name string) bool {
+	if err := r.ParseForm(); err != nil {
+		return false
+	}
+	v := r.Form[name]
+	if len(v) == 0 {
+		return false
+	}
+	return v[len(v)-1] == "1"
+}
+
 // note renders one line of explanation, in a tone.
 //
 // tone is "neutral", "warning" or "bad". Three and not more: the panel says

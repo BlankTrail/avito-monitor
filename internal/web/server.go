@@ -164,6 +164,17 @@ func (s *Server) Handler() http.Handler {
 
 	mux.Handle("GET /health", s.auth(http.HandlerFunc(s.healthPage)))
 
+	mux.Handle("GET /rules", s.auth(http.HandlerFunc(s.rulesPage)))
+	mux.Handle("GET /rules/edit", s.auth(http.HandlerFunc(s.ruleEditor)))
+	mux.Handle("POST /rules", s.auth(http.HandlerFunc(s.saveRule)))
+	mux.Handle("POST /rules/delete", s.auth(http.HandlerFunc(s.deleteRule)))
+	mux.Handle("POST /rules/targets", s.auth(http.HandlerFunc(s.saveTarget)))
+	mux.Handle("POST /rules/targets/delete", s.auth(http.HandlerFunc(s.deleteTarget)))
+
+	mux.Handle("GET /results", s.auth(http.HandlerFunc(s.resultsPage)))
+	mux.Handle("GET /results/table", s.auth(http.HandlerFunc(s.resultsFragment)))
+	mux.Handle("GET /results/export", s.auth(http.HandlerFunc(s.exportResults)))
+
 	mux.Handle("GET /history", s.auth(http.HandlerFunc(s.historyPage)))
 	mux.Handle("GET /history/chart", s.auth(http.HandlerFunc(s.historyChart)))
 
@@ -232,12 +243,13 @@ func (s *Server) ListenAddress(ctx context.Context, port int, lan bool) (string,
 
 // tabs is the header navigation.
 //
-// Four after 6B. Правила and Результаты
-// arrive with 6C; a tab that answers 404 is a tab a person clicks once and stops
-// trusting, so they are added when their screens are.
+// Six, and the increment's last one. A tab that answers 404 is a tab a person
+// clicks once and stops trusting, so each was added when its screen was.
 func (s *Server) tabs(path string) []Tab {
 	out := []Tab{
 		{Label: "Наблюдения", Href: "/"},
+		{Label: "Результаты", Href: "/results"},
+		{Label: "Правила", Href: "/rules"},
 		{Label: "Здоровье сбора", Href: "/health"},
 		{Label: "История", Href: "/history"},
 		{Label: "Прокси", Href: "/channels"},

@@ -14,6 +14,10 @@ import (
 	"github.com/BlankTrail/avito-monitor/internal/store"
 )
 
+// secretKey is a fixture and not a key. It has the shape of a BlankTrail API
+// key — forty hex characters — because these tests assert that a secret of that
+// shape never reaches a page, and nothing more. A working key in a public AGPL
+// repository would be a working key in every clone of it.
 const secretKey = "0000000000000000000000000000000000000000"
 
 func settingsForm(over url.Values) url.Values {
@@ -327,3 +331,38 @@ type fakeAutostart struct {
 func (f fakeAutostart) Enabled() (bool, error) { *f.asked = true; return f.on, nil }
 func (f fakeAutostart) Enable() error          { return nil }
 func (f fakeAutostart) Disable() error         { return nil }
+
+// TestATickedBoxIsActuallyTicked.
+//
+// checkbox() writes a hidden "0" before the box so that unticking posts
+// something — but a ticked box then posts both, «0» first, and r.FormValue
+// returns the first. Read that way, every checkbox on this panel was
+// permanently off whatever the person clicked: the panel could not be opened to
+// the network, autostart could not be enabled, and «Стереть» never erased
+// anything. Found by Результаты needing a working checkbox of its own.
+func TestATickedBoxIsActuallyTicked(t *testing.T) {
+	s := newServer(t)
+
+	form := url.Values{"mode": {"direct"}}
+	form["autostart"] = []string{"0", "1"} // exactly what a browser posts
+	if rec := post(t, s, "/settings", form); rec.Code != http.StatusSeeOther {
+		t.Fatalf("POST /settings = %d (%s)", rec.Code, rec.Body.String())
+	}
+	p, err := s.Store.PanelSettings(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !p.Autostart {
+		t.Error("the box was ticked and the setting stayed off")
+	}
+
+	// And the other half still holds: unticking posts only the hidden zero,
+	// which is the reason the hidden companion exists at all.
+	form["autostart"] = []string{"0"}
+	if rec := post(t, s, "/settings", form); rec.Code != http.StatusSeeOther {
+		t.Fatalf("POST /settings = %d (%s)", rec.Code, rec.Body.String())
+	}
+	if p, _ = s.Store.PanelSettings(context.Background()); p.Autostart {
+		t.Error("unticking the box left the setting on")
+	}
+}
