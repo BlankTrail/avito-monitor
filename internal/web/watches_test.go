@@ -231,3 +231,24 @@ func TestEveryFaultInOneFormIsReportedAtOnce(t *testing.T) {
 		}
 	}
 }
+
+// TestTheSurfaceLabelSaysWhichWayRoundItIs.
+//
+// It used to say mobile carried more cards. Mobile carries thirty against
+// desktop's fifty — the spec's own table says so and the fixtures agree. What
+// mobile actually buys is one request per page instead of two, which is the
+// only reason it is still the default on a budget counted in requests.
+func TestTheSurfaceLabelSaysWhichWayRoundItIs(t *testing.T) {
+	body := get(t, newServer(t), "/").Body.String()
+	if strings.Contains(body, "больше карточек") {
+		t.Error("the label still claims mobile has more cards")
+	}
+	if !strings.Contains(body, "30 объявлений") || !strings.Contains(body, "50 объявлений") {
+		t.Errorf("the label does not give both counts: %s", body)
+	}
+	// And what the cheaper page costs, said where the choice is made rather
+	// than discovered a month later from an empty screen.
+	if !strings.Contains(body, "не отдаёт ни продавца") {
+		t.Error("the screen does not say what the mobile surface leaves out")
+	}
+}

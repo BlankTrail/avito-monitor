@@ -165,11 +165,28 @@ func watchForm(d store.Watch) string {
 	b.WriteString(field("Страниц за проход", "pages",
 		strconv.Itoa(d.MaxPages), "number",
 		fmt.Sprintf("Один запрос на страницу. Не больше %d.", maxPagesPerPass)))
+	// The two surfaces are a real trade and the label used to state it
+	// backwards — it said mobile carried more cards, and mobile carries
+	// thirty against desktop's fifty. What mobile actually buys is one
+	// request per page instead of two and about a megabyte instead of
+	// two and a half, which is why it is still the first option: on a
+	// budget counted in requests it is the cheaper page, 30 listings per
+	// request against 25.
+	//
+	// What it costs is measured in
+	// docs/measurements/2026-08-25-what-the-repost-ladder-can-see.md: the
+	// mobile payload carries no seller, no category, no location, no
+	// coordinates and no description — 0 of 30 on every one — so nothing
+	// downstream that needs them works on a mobile watch.
 	b.WriteString(`<label class="field"><span class="label">Версия сайта</span>` +
-		`<select name="surface">` +
-		`<option value="mobile">мобильная (больше карточек на странице)</option>` +
-		`<option value="desktop">десктопная</option>` +
-		`</select></label>`)
+		`<select class="input" name="surface">` +
+		`<option value="mobile">мобильная — дешевле: один запрос на страницу, 30 объявлений</option>` +
+		`<option value="desktop">десктопная — два запроса на страницу, 50 объявлений, ` +
+		`но только она несёт продавца</option>` +
+		`</select>` +
+		`<span class="hint">Мобильная выдача не отдаёт ни продавца, ни категорию, ` +
+		`ни координаты, ни описание. Всё, что на них опирается, на таком ` +
+		`наблюдении не работает.</span></label>`)
 	b.WriteString(`<button class="primary" type="submit">Добавить</button>`)
 	b.WriteString(`</form></div>`)
 	return b.String()
