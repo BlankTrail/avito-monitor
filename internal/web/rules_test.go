@@ -565,3 +565,21 @@ func TestEditingARuleUpdatesItRatherThanAddingASecond(t *testing.T) {
 		t.Errorf("rule = %+v", all[0])
 	}
 }
+
+// TestARuleScopedToAWatchNamesIt.
+//
+// «наблюдение 2» is a number a person has to go and look up — and they named
+// that watch themselves, on the screen next door.
+func TestARuleScopedToAWatchNamesIt(t *testing.T) {
+	s := newServer(t)
+	aTarget(t, s, "я", "100500", true)
+	aWatch(t, s, "мой поиск")
+
+	body := get(t, s, "/rules").Body.String()
+	if !strings.Contains(body, "наблюдение «мой поиск»") {
+		t.Errorf("the scope is shown as a number: %s", body)
+	}
+	if strings.Contains(body, "наблюдение 1<") {
+		t.Error("a bare watch id reached the page")
+	}
+}

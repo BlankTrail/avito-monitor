@@ -56,22 +56,34 @@ func (s *Server) rulesPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	watches, err := s.Store.Watches(ctx)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
 	var b strings.Builder
-	b.WriteString(ruleList(all, targets))
+	b.WriteString(ruleList(all, targets, watches))
 	b.WriteString(targetList(targets))
 	b.WriteString(decisionLog(events, all))
 
 	s.render(w, r, page{Title: "Правила", Body: rawHTML(b.String())})
 }
 
-func ruleList(all []rules.Rule, targets []store.TargetRow) string {
+func ruleList(all []rules.Rule, targets []store.TargetRow, watches []store.Watch) string {
 	names := map[int64]string{}
 	for _, t := range targets {
 		names[t.ID] = t.Name
 	}
+	watchNames := map[int64]string{}
+	for _, w := range watches {
+		watchNames[w.ID] = w.Name
+	}
 
 	var b strings.Builder
-	b.WriteString(`<div class="card"><h2>Правила</h2>`)
+	// No heading: the page is called Правила and a card repeating it inside is
+	// a word a reader has to check twice for a difference that is not there.
+	b.WriteString(`<div class="card">`)
 	if len(all) == 0 {
 		b.WriteString(note("neutral",
 			"Ни одного правила. Добавьте наблюдение — вместе с ним создадутся "+
@@ -94,7 +106,7 @@ func ruleList(all []rules.Rule, targets []store.TargetRow) string {
 			b.WriteString(`<br><span class="hint">создано программой</span>`)
 		}
 		fmt.Fprintf(&b, `</td><td>%s<br><span class="hint">%s</span></td><td>%s</td>`,
-			esc(track.Label(rule.Kind)), esc(scopeLabel(rule.Scope)),
+			esc(track.Label(rule.Kind)), esc(scopeLabel(rule.Scope, watchNames)),
 			esc(targetNames(rule.Targets, names)))
 
 		b.WriteString(`<td>`)
@@ -143,7 +155,12 @@ func targetNames(ids []int64, names map[int64]string) string {
 	return strings.Join(out, ", ")
 }
 
-func scopeLabel(sc rules.Scope) string {
+// scopeLabel says what a rule watches, by name wherever there is one.
+//
+// «наблюдение 2» is a number a person has to go and look up; they named that
+// watch themselves. The other three subjects have no names anywhere in this
+// product, so they stay numbers — which is honest rather than lazy.
+func scopeLabel(sc rules.Scope, watchNames map[int64]string) string {
 	switch sc.Kind {
 	case rules.ScopeListing:
 		return fmt.Sprintf("объявление %d", sc.ID)
@@ -152,7 +169,12 @@ func scopeLabel(sc rules.Scope) string {
 	case rules.ScopeSeller:
 		return fmt.Sprintf("продавец %d", sc.ID)
 	case rules.ScopeWatch:
-		return fmt.Sprintf("наблюдение %d", sc.ID)
+		if name, ok := watchNames[sc.ID]; ok {
+			return "наблюдение «" + name + "»"
+		}
+		// The watch is gone and the rule outlived it. Said plainly, because a
+		// rule scoped to nothing fires on nothing.
+		return fmt.Sprintf("наблюдение %d (удалено)", sc.ID)
 	case rules.ScopeFilter:
 		f := sc.Filter
 		switch {
