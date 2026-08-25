@@ -208,3 +208,56 @@ func subtreeHTML(z *html.Tokenizer, tag []byte) []byte {
 	}
 	return buf.Bytes()
 }
+
+// scanMarkerAttrs walks the document once and returns one named attribute of
+// every element carrying one of the wanted data-marker values.
+//
+// The companion to scanMarkers, which returns subtree text. The seller on an
+// item page is an anchor whose href is the answer and whose text is the whole
+// seller block run together — «Re:Market4,91898 отзывовКомпания · На Авито c
+// 2020 года» — so the text is not something to parse a name out of, and the
+// attribute is not something to reach with a pattern. One walk, one attribute,
+// no regex against markup.
+//
+// Both attributes are read in a single pass over the token, because the
+// tokenizer's attribute cursor only moves forward: attrOf consumes what it
+// walked past, so calling it twice on one token would look for the second
+// attribute starting after the first — and find it only when the document
+// happened to order them that way.
+//
+// First occurrence wins, the same rule scanMarkers keeps: a marker repeated
+// later is a second rendering of the same thing, and taking the last would make
+// the answer depend on how far the page got.
+func scanMarkerAttrs(body []byte, want map[string]bool, attr string) map[string]string {
+	out := map[string]string{}
+	z := html.NewTokenizer(bytes.NewReader(body))
+	for {
+		switch z.Next() {
+		case html.ErrorToken:
+			return out
+		case html.StartTagToken, html.SelfClosingTagToken:
+			if _, hasAttr := z.TagName(); !hasAttr {
+				continue
+			}
+			marker, value := "", ""
+			for {
+				k, v, more := z.TagAttr()
+				switch string(k) {
+				case "data-marker":
+					marker = string(v) // string() copies
+				case attr:
+					value = string(v)
+				}
+				if !more {
+					break
+				}
+			}
+			if marker == "" || !want[marker] || value == "" {
+				continue
+			}
+			if _, taken := out[marker]; !taken {
+				out[marker] = value
+			}
+		}
+	}
+}

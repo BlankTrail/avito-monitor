@@ -30,6 +30,11 @@ var itemMarkers = map[string]bool{
 	markerItemClosed: true,
 }
 
+// markerSellerLink is the anchor pointing at whoever posted this.
+const markerSellerLink = "seller-link/link"
+
+var itemLinkMarkers = map[string]bool{markerSellerLink: true}
+
 // extractItem reads one listing's own page.
 //
 // It exists in this increment rather than a later one because it is what turns
@@ -42,6 +47,13 @@ func extractItem(d Document) (Page, bool) {
 	page.Report.Path = PathDOM
 
 	f := scanMarkers(d.Body, itemMarkers)
+	// The seller, from the link and not from the text. This is the one field
+	// enrichment exists to recover: a listing collected from the mobile
+	// surface has no seller at all, and the seller is the repost ladder's one
+	// hard gate. The block's text runs the name, the rating and the join date
+	// together with no separator, so the href is the only thing here worth
+	// reading — and it is read whole rather than pattern-matched.
+	links := scanMarkerAttrs(d.Body, itemLinkMarkers, "href")
 	id, ok := DigitsToInt(f[markerItemID])
 	if !ok {
 		return Page{}, false
@@ -58,6 +70,10 @@ func extractItem(d Document) (Page, bool) {
 		// uninterpreted. Its presence is the only thing permitted to write
 		// state='closed' with confidence 1.0.
 		ClosedReason: f[markerItemClosed],
+	}
+	if key, quality := sellerKeyFromLink(links[markerSellerLink]); key != "" {
+		l.SellerKey, l.SellerKeyQuality = key, quality
+		l.SellerProfilePath = trimQuery(links[markerSellerLink])
 	}
 	switch {
 	case l.PriceLabel == "":

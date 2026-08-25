@@ -232,34 +232,39 @@ func TestEveryFaultInOneFormIsReportedAtOnce(t *testing.T) {
 	}
 }
 
-// TestTheSurfaceLabelSaysWhichWayRoundItIs.
+// TestTheSurfaceLabelSaysWhatEachOneActuallyDoes.
 //
-// It used to say mobile carried more cards. Mobile carries thirty against
-// desktop's fifty — the spec's own table says so and the fixtures agree. What
-// mobile actually buys is one request per page instead of two, which is the
-// only reason it is still the default on a budget counted in requests.
-func TestTheSurfaceLabelSaysWhichWayRoundItIs(t *testing.T) {
+// It once said mobile carried more cards, which was backwards — mobile carries
+// thirty against desktop's fifty. That is no longer the interesting difference:
+// a live run found the desktop search page is a shell with no listings at all,
+// so the card count is not what a person choosing needs to know.
+//
+// What they need is on the screen: what mobile costs, and that desktop does not
+// collect. Both, or the choice is made blind.
+func TestTheSurfaceLabelSaysWhatEachOneActuallyDoes(t *testing.T) {
 	body := get(t, newServer(t), "/").Body.String()
 	if strings.Contains(body, "больше карточек") {
 		t.Error("the label still claims mobile has more cards")
 	}
-	if !strings.Contains(body, "30 объявлений") || !strings.Contains(body, "50 объявлений") {
-		t.Errorf("the label does not give both counts: %s", body)
-	}
-	// And what the cheaper page costs, said where the choice is made rather
-	// than discovered a month later from an empty screen.
 	if !strings.Contains(body, "не отдаёт ни продавца") {
 		t.Error("the screen does not say what the mobile surface leaves out")
 	}
+	if !strings.Contains(body, "пока не собирает") {
+		t.Error("the screen does not say that the desktop surface collects nothing")
+	}
+	if !strings.Contains(body, "avitomon enrich") {
+		t.Error("the screen does not say how the missing seller is recovered")
+	}
 }
 
-// TestANewWatchIsOfferedTheDesktopSurface.
+// TestANewWatchIsOfferedTheSurfaceThatActuallyCollects.
 //
-// Reversed deliberately in increment 7A. Mobile is the cheaper page — one
-// request instead of two — but it carries no seller, no category, no location
-// and no coordinates, 0 of 30, so a mobile watch can never link a repost. Cheap
-// and unable to do the thing is the wrong default.
-func TestANewWatchIsOfferedTheDesktopSurface(t *testing.T) {
+// Increment 7A made desktop the default because mobile carries none of what the
+// repost ladder reads. A live run took it back the same day: the desktop search
+// page is a shell carrying a canonical URL and no listings, and nothing here
+// follows it — a desktop watch collects zero. The screen says so rather than
+// offering a choice that quietly does nothing.
+func TestANewWatchIsOfferedTheSurfaceThatActuallyCollects(t *testing.T) {
 	body := get(t, newServer(t), "/").Body.String()
 	i := strings.Index(body, `name="surface"`)
 	if i < 0 {
@@ -267,15 +272,19 @@ func TestANewWatchIsOfferedTheDesktopSurface(t *testing.T) {
 	}
 	sel := body[i:]
 	sel = sel[:strings.Index(sel, "</select>")]
-	if !strings.Contains(sel, `value="desktop" selected`) {
-		t.Errorf("desktop is not the selected option: %s", sel)
+	if !strings.Contains(sel, `value="mobile" selected`) {
+		t.Errorf("mobile is not the selected option: %s", sel)
 	}
-	if strings.Contains(sel, `value="mobile" selected`) {
+	if strings.Contains(sel, `value="desktop" selected`) {
 		t.Error("both options are selected")
 	}
-	// Mobile is still offered, and its price is still on the page.
-	if !strings.Contains(sel, `value="mobile"`) {
-		t.Error("the mobile surface is no longer offered at all")
+	// Desktop is still offered — somebody may fix the shell-follow — but the
+	// option says what it does today rather than looking like a live choice.
+	if !strings.Contains(sel, `value="desktop"`) {
+		t.Error("the desktop surface is no longer offered at all")
+	}
+	if !strings.Contains(sel, "пока не собирает") {
+		t.Error("the desktop option does not say that it collects nothing")
 	}
 	if !strings.Contains(body, "не отдаёт ни продавца") {
 		t.Error("the screen stopped saying what the mobile surface leaves out")
@@ -284,11 +293,11 @@ func TestANewWatchIsOfferedTheDesktopSurface(t *testing.T) {
 
 // TestARejectedFormComesBackWithTheSurfaceThePersonChose.
 //
-// The draft is what the form is redrawn from, and a person who picked mobile
-// and mistyped the URL must not silently get desktop back.
+// The draft is what the form is redrawn from, and a person who picked one
+// surface and mistyped the URL must not silently get the other back.
 func TestARejectedFormComesBackWithTheSurfaceThePersonChose(t *testing.T) {
 	form := addWatchForm("наблюдение", "https://m.avito.ru/all?q=x", 300)
-	form.Set("surface", "mobile")
+	form.Set("surface", "desktop")
 	form.Set("url", "не ссылка вовсе")
 
 	rec := post(t, newServer(t), "/watches", form)
@@ -302,7 +311,7 @@ func TestARejectedFormComesBackWithTheSurfaceThePersonChose(t *testing.T) {
 	}
 	sel = sel[i:]
 	sel = sel[:strings.Index(sel, "</select>")]
-	if !strings.Contains(sel, `value="mobile" selected`) {
+	if !strings.Contains(sel, `value="desktop" selected`) {
 		t.Errorf("the chosen surface was lost to the refusal: %s", sel)
 	}
 }

@@ -134,3 +134,60 @@ func TestTheMobileSurfaceIdentifiesNoSellerAtAll(t *testing.T) {
 		}
 	}
 }
+
+// TestAnItemPageIdentifiesItsSeller.
+//
+// This is the one field enrichment exists to recover. A listing collected from
+// the mobile surface has no seller at all, and the seller is the repost
+// ladder's one hard gate — so an item page that could not name one would make
+// the whole enrichment path spend a request per listing and learn nothing.
+//
+// From the link and not from the text: the seller block's text runs the name,
+// the rating and the join date together with no separator
+// («Re:Market4,91898 отзывовКомпания · На Авито c 2020 года»), which is not
+// something to parse a name out of.
+func TestAnItemPageIdentifiesItsSeller(t *testing.T) {
+	page := parseFixture(t, "desktop-item")
+	if len(page.Listings) != 1 {
+		t.Fatalf("%d listings on an item page", len(page.Listings))
+	}
+	l := page.Listings[0]
+	if l.SellerKey != "brand:bioniqo" {
+		t.Errorf("SellerKey = %q", l.SellerKey)
+	}
+	if l.SellerKeyQuality != "slug" {
+		t.Errorf("SellerKeyQuality = %q", l.SellerKeyQuality)
+	}
+	if l.SellerProfilePath != "/brands/bioniqo" {
+		t.Errorf("SellerProfilePath = %q", l.SellerProfilePath)
+	}
+}
+
+// TestTheAttributeScannerReadsTheRightAttributeWhateverTheOrder.
+//
+// The tokenizer's attribute cursor only moves forward, so reading data-marker
+// and then href with two walks finds the second only when the document happened
+// to write them in that order. Both orders are in the wild.
+func TestTheAttributeScannerReadsTheRightAttributeWhateverTheOrder(t *testing.T) {
+	body := []byte(`<a data-marker="seller-link/link" href="/brands/first">x</a>` +
+		`<a href="/brands/second" data-marker="other/link">y</a>`)
+	got := scanMarkerAttrs(body, map[string]bool{
+		"seller-link/link": true, "other/link": true,
+	}, "href")
+	if got["seller-link/link"] != "/brands/first" {
+		t.Errorf("marker-then-href = %q", got["seller-link/link"])
+	}
+	if got["other/link"] != "/brands/second" {
+		t.Errorf("href-then-marker = %q", got["other/link"])
+	}
+}
+
+// TestARepeatedMarkerTakesTheFirst, so the answer does not depend on how far
+// the page got before it was truncated.
+func TestARepeatedMarkerTakesTheFirst(t *testing.T) {
+	body := []byte(`<a data-marker="m" href="/brands/first">x</a>` +
+		`<a data-marker="m" href="/brands/second">y</a>`)
+	if got := scanMarkerAttrs(body, map[string]bool{"m": true}, "href"); got["m"] != "/brands/first" {
+		t.Errorf("= %q", got["m"])
+	}
+}
