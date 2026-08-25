@@ -162,6 +162,8 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /settings/blanktrail", s.auth(http.HandlerFunc(s.checkBlankTrail)))
 	mux.Handle("GET /settings/telegram", s.auth(http.HandlerFunc(s.checkTelegram)))
 
+	mux.Handle("GET /health", s.auth(http.HandlerFunc(s.healthPage)))
+
 	mux.Handle("GET /channels", s.auth(http.HandlerFunc(s.channelsPage)))
 	mux.Handle("POST /channels", s.auth(http.HandlerFunc(s.saveChannel)))
 	mux.Handle("POST /channels/delete", s.auth(http.HandlerFunc(s.deleteChannel)))
@@ -227,12 +229,13 @@ func (s *Server) ListenAddress(ctx context.Context, port int, lan bool) (string,
 
 // tabs is the header navigation.
 //
-// Three in 6A. Здоровье сбора and История arrive with 6B, Правила and Результаты
-// with 6C; a tab that answers 404 is a tab a person clicks once and stops
+// Four after 6B. Правила and Результаты
+// arrive with 6C; a tab that answers 404 is a tab a person clicks once and stops
 // trusting, so they are added when their screens are.
 func (s *Server) tabs(path string) []Tab {
 	out := []Tab{
 		{Label: "Наблюдения", Href: "/"},
+		{Label: "Здоровье сбора", Href: "/health"},
 		{Label: "Прокси", Href: "/channels"},
 		{Label: "Настройки", Href: "/settings"},
 	}
