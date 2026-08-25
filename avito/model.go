@@ -81,7 +81,12 @@ type Listing struct {
 
 	Description string
 
-	ImagesCount   *int64
+	ImagesCount *int64
+	// ImageKey is the identity of the listing's first photo, shared by its six
+	// size variants. Empty on the mobile surface, which carries no images at
+	// all — see
+	// docs/measurements/2026-08-25-what-the-repost-ladder-can-see.md.
+	ImageKey      string
 	IsXL          *bool // an XL promotion placement
 	IsReMap       *bool
 	IsVerified    *bool

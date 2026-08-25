@@ -263,6 +263,7 @@ type stateItem struct {
 	Contacts             *struct {
 		Delivery bool `json:"delivery"`
 	} `json:"contacts"`
+	Images   []map[string]string `json:"images"`
 	UserLogo *struct {
 		Link string `json:"link"`
 	} `json:"userLogo"`
@@ -324,6 +325,18 @@ func decodeStateListing(raw json.RawMessage, rep *ExtractionReport) (Listing, bo
 	if it.Contacts != nil {
 		d := it.Contacts.Delivery
 		l.HasDelivery = &d
+	}
+	// The first photo only. A listing's identity is not the set of its photos —
+	// a seller who re-uploads may reorder or drop some — and the first is the
+	// one both incarnations are most likely to share. Taking all of them would
+	// mean deciding what a partial overlap means, and this signal is far too
+	// weak to carry that judgement.
+	if len(it.Images) > 0 {
+		variants := make([]string, 0, len(it.Images[0]))
+		for _, url := range it.Images[0] {
+			variants = append(variants, url)
+		}
+		l.ImageKey = ImageKey(variants)
 	}
 	if it.UserLogo != nil && it.UserLogo.Link != "" {
 		if slug := brandSlug(it.UserLogo.Link); slug != "" {
