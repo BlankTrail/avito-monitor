@@ -216,3 +216,51 @@ func TestAnAgeIsHowLongAgoAndNotATimestamp(t *testing.T) {
 
 // s0Unix is the fixed clock newServer hands the Server.
 const s0Unix = 1_700_000_000
+
+// TestTheHealthScreenSaysHowManyListingsHaveASeller.
+//
+// A shipped metric and not a debugging aid: the seller is the repost ladder's
+// one hard gate, and a listing without one can never be linked.
+func TestTheHealthScreenSaysHowManyListingsHaveASeller(t *testing.T) {
+	s := newServer(t)
+	if _, err := s.Store.DB().Exec(`
+		INSERT INTO sellers (seller_key, key_quality, first_seen_at, last_seen_at)
+		VALUES ('brand:x', 'slug', 1000, 1000)`); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 5; i++ {
+		seller := "NULL"
+		if i < 2 {
+			seller = "1"
+		}
+		if _, err := s.Store.DB().Exec(`
+			INSERT INTO listings (item_id, thread_id, url_path, title, seller_id,
+			                      first_seen_at, last_seen_at, state_at)
+			VALUES (?, ?, '/m/x', 'объявление', `+seller+`, 1000, 1000, 1000)`,
+			700+i, 700+i); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	body := get(t, s, "/health").Body.String()
+	if !strings.Contains(body, "Продавец известен у <strong>2</strong>") {
+		t.Errorf("the coverage is not on the screen: %s", body)
+	}
+	if !strings.Contains(body, "из 5") {
+		t.Error("the total is missing; «2» alone says nothing")
+	}
+	if !strings.Contains(body, "У 3 продавца нет") {
+		t.Error("the waiting count is missing")
+	}
+	if !strings.Contains(body, "avitomon enrich") {
+		t.Error("the screen does not say what to do about it")
+	}
+}
+
+// TestAnEmptyDatabaseSaysNothingAboutSellers, rather than «0 из 0».
+func TestAnEmptyDatabaseSaysNothingAboutSellers(t *testing.T) {
+	if strings.Contains(get(t, newServer(t), "/health").Body.String(),
+		"Продавец известен") {
+		t.Error("a fresh install is told about a queue it has no rows for")
+	}
+}

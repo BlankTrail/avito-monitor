@@ -252,3 +252,57 @@ func TestTheSurfaceLabelSaysWhichWayRoundItIs(t *testing.T) {
 		t.Error("the screen does not say what the mobile surface leaves out")
 	}
 }
+
+// TestANewWatchIsOfferedTheDesktopSurface.
+//
+// Reversed deliberately in increment 7A. Mobile is the cheaper page — one
+// request instead of two — but it carries no seller, no category, no location
+// and no coordinates, 0 of 30, so a mobile watch can never link a repost. Cheap
+// and unable to do the thing is the wrong default.
+func TestANewWatchIsOfferedTheDesktopSurface(t *testing.T) {
+	body := get(t, newServer(t), "/").Body.String()
+	i := strings.Index(body, `name="surface"`)
+	if i < 0 {
+		t.Fatal("no surface control on the page")
+	}
+	sel := body[i:]
+	sel = sel[:strings.Index(sel, "</select>")]
+	if !strings.Contains(sel, `value="desktop" selected`) {
+		t.Errorf("desktop is not the selected option: %s", sel)
+	}
+	if strings.Contains(sel, `value="mobile" selected`) {
+		t.Error("both options are selected")
+	}
+	// Mobile is still offered, and its price is still on the page.
+	if !strings.Contains(sel, `value="mobile"`) {
+		t.Error("the mobile surface is no longer offered at all")
+	}
+	if !strings.Contains(body, "не отдаёт ни продавца") {
+		t.Error("the screen stopped saying what the mobile surface leaves out")
+	}
+}
+
+// TestARejectedFormComesBackWithTheSurfaceThePersonChose.
+//
+// The draft is what the form is redrawn from, and a person who picked mobile
+// and mistyped the URL must not silently get desktop back.
+func TestARejectedFormComesBackWithTheSurfaceThePersonChose(t *testing.T) {
+	form := addWatchForm("наблюдение", "https://m.avito.ru/all?q=x", 300)
+	form.Set("surface", "mobile")
+	form.Set("url", "не ссылка вовсе")
+
+	rec := post(t, newServer(t), "/watches", form)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("= %d", rec.Code)
+	}
+	sel := rec.Body.String()
+	i := strings.Index(sel, `name="surface"`)
+	if i < 0 {
+		t.Fatal("no surface control on the redrawn page")
+	}
+	sel = sel[i:]
+	sel = sel[:strings.Index(sel, "</select>")]
+	if !strings.Contains(sel, `value="mobile" selected`) {
+		t.Errorf("the chosen surface was lost to the refusal: %s", sel)
+	}
+}

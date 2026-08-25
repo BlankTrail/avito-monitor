@@ -35,7 +35,9 @@ const minIntervalSec = 120
 const maxPagesPerPass = 10
 
 func (s *Server) watchesPage(w http.ResponseWriter, r *http.Request) {
-	s.renderWatches(w, r, "", store.Watch{Surface: avito.SurfaceMobile,
+	// Desktop, and the reason is in the form's own comment below: mobile is
+	// the cheaper page and carries none of what the repost ladder reads.
+	s.renderWatches(w, r, "", store.Watch{Surface: avito.SurfaceDesktop,
 		MaxPages: 1, IntervalSec: 300})
 }
 
@@ -166,27 +168,32 @@ func watchForm(d store.Watch) string {
 		strconv.Itoa(d.MaxPages), "number",
 		fmt.Sprintf("Один запрос на страницу. Не больше %d.", maxPagesPerPass)))
 	// The two surfaces are a real trade and the label used to state it
-	// backwards — it said mobile carried more cards, and mobile carries
-	// thirty against desktop's fifty. What mobile actually buys is one
-	// request per page instead of two and about a megabyte instead of
-	// two and a half, which is why it is still the first option: on a
-	// budget counted in requests it is the cheaper page, 30 listings per
-	// request against 25.
+	// backwards — it said mobile carried more cards, and mobile carries thirty
+	// against desktop's fifty. What mobile actually buys is one request per
+	// page instead of two and about a megabyte instead of two and a half.
 	//
-	// What it costs is measured in
+	// Desktop is nevertheless the default from increment 7A onward, and the
+	// reason is measured in
 	// docs/measurements/2026-08-25-what-the-repost-ladder-can-see.md: the
 	// mobile payload carries no seller, no category, no location, no
-	// coordinates and no description — 0 of 30 on every one — so nothing
-	// downstream that needs them works on a mobile watch.
+	// coordinates and no description — 0 of 30 on every one. Cheap and unable
+	// to do the thing is the wrong default. Mobile stays on offer with its
+	// price stated, and the selected option follows the draft so a rejected
+	// form comes back with the choice the person made.
 	b.WriteString(`<label class="field"><span class="label">Версия сайта</span>` +
 		`<select class="input" name="surface">` +
-		`<option value="mobile">мобильная — дешевле: один запрос на страницу, 30 объявлений</option>` +
-		`<option value="desktop">десктопная — два запроса на страницу, 50 объявлений, ` +
-		`но только она несёт продавца</option>` +
+		fmt.Sprintf(`<option value="desktop"%s>десктопная — два запроса на `+
+			`страницу, 50 объявлений, и только она несёт продавца</option>`,
+			selected(d.Surface != avito.SurfaceMobile)) +
+		fmt.Sprintf(`<option value="mobile"%s>мобильная — дешевле: один запрос `+
+			`на страницу, 30 объявлений</option>`,
+			selected(d.Surface == avito.SurfaceMobile)) +
 		`</select>` +
-		`<span class="hint">Мобильная выдача не отдаёт ни продавца, ни категорию, ` +
-		`ни координаты, ни описание. Всё, что на них опирается, на таком ` +
-		`наблюдении не работает.</span></label>`)
+		`<span class="hint">Мобильная выдача не отдаёт ни продавца, ни ` +
+		`категорию, ни координаты, ни описание. Перевыкладки на таком ` +
+		`наблюдении не связываются — недостающее можно дополнить отдельно, ` +
+		`командой «avitomon enrich», по одному запросу на объявление.</span>` +
+		`</label>`)
 	b.WriteString(`<button class="primary" type="submit">Добавить</button>`)
 	b.WriteString(`</form></div>`)
 	return b.String()
