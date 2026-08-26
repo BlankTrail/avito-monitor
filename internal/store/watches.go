@@ -30,19 +30,24 @@ type Watch struct {
 	IntervalSec          int
 	AbsenceConfirmations int
 	AbsenceMinSpanSec    int
-	State                string
-	HaltedReason         string
-	SeededAt             *int64
-	NextDueAt            int64
-	LastTotalCount       *int64
-	TooBroad             bool
-	Enabled              bool
-	CreatedAt            int64
-	UpdatedAt            int64
+	// RepostWindowSec is how long after a listing ended a new one may still be
+	// called its successor. Thirty days by default — declared in migration 0001
+	// and read by nobody until the linker.
+	RepostWindowSec int
+	State           string
+	HaltedReason    string
+	SeededAt        *int64
+	NextDueAt       int64
+	LastTotalCount  *int64
+	TooBroad        bool
+	Enabled         bool
+	CreatedAt       int64
+	UpdatedAt       int64
 }
 
 const watchColumns = `id, name, kind, url, surface, max_pages, interval_sec,
-	absence_confirmations, absence_min_span_sec, state, halted_reason,
+	absence_confirmations, absence_min_span_sec, repost_window_sec,
+	state, halted_reason,
 	seeded_at, next_due_at, last_total_count, too_broad, enabled,
 	created_at, updated_at`
 
@@ -53,7 +58,7 @@ func scanWatch(sc scanner) (Watch, error) {
 	var surface string
 	err := sc.Scan(&w.ID, &w.Name, &w.Kind, &w.URL, &surface, &w.MaxPages,
 		&w.IntervalSec, &w.AbsenceConfirmations, &w.AbsenceMinSpanSec,
-		&w.State, &w.HaltedReason, &w.SeededAt, &w.NextDueAt,
+		&w.RepostWindowSec, &w.State, &w.HaltedReason, &w.SeededAt, &w.NextDueAt,
 		&w.LastTotalCount, &w.TooBroad, &w.Enabled, &w.CreatedAt, &w.UpdatedAt)
 	w.Surface = avito.Surface(surface)
 	return w, err
