@@ -575,3 +575,114 @@ func TestASeedingPassLinksNothing(t *testing.T) {
 		}
 	}
 }
+
+// TestAPredecessorThatComesBackRetractsItsLink.
+//
+// If a listing we declared vanished is seen again, it never died — so every
+// link built on its death is wrong, and it undoes itself rather than waiting
+// for somebody to notice.
+func TestAPredecessorThatComesBackRetractsItsLink(t *testing.T) {
+	s := openTemp(t)
+	ctx := context.Background()
+	id := addTestWatch(t, s, "наблюдение", 300)
+
+	first := aLinkable(100, "iPhone 15, 128 ГБ")
+	for _, at := range []int64{1000, 1200} {
+		if _, err := s.SavePass(ctx, aDesktopPass(id, at),
+			[]avito.Listing{first}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := s.DB().Exec(`
+		UPDATE listings SET state = 'vanished', last_seen_at = 1300
+		WHERE item_id = 100`); err != nil {
+		t.Fatal(err)
+	}
+	second := aLinkable(200, "iPhone 15, 128 ГБ")
+	if _, err := s.SavePass(ctx, aDesktopPass(id, 1400),
+		[]avito.Listing{second}); err != nil {
+		t.Fatal(err)
+	}
+	if got := threadOf(t, s, 200); got != 100 {
+		t.Fatalf("no link was made to retract: thread %d", got)
+	}
+	if _, err := s.DB().Exec(`DELETE FROM changes`); err != nil {
+		t.Fatal(err)
+	}
+
+	// And there it is again.
+	if _, err := s.SavePass(ctx, aDesktopPass(id, 1600),
+		[]avito.Listing{first, second}); err != nil {
+		t.Fatal(err)
+	}
+
+	links, err := s.RepostLinks(ctx, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(links) != 1 || links[0].State != "retracted" {
+		t.Fatalf("links = %+v", links)
+	}
+	if links[0].DecidedBy != "reappeared" {
+		t.Errorf("decided_by = %q, want reappeared", links[0].DecidedBy)
+	}
+	// The successor gets its own thread back.
+	if got := threadOf(t, s, 200); got != 200 {
+		t.Errorf("the successor is still in thread %d", got)
+	}
+	// And it is said out loud: somebody was told «выложено заново, вместо 100».
+	found := false
+	for _, k := range kindsOf(t, s) {
+		if k == string(track.KindRepostRetracted) {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("the retraction was silent: %v", kindsOf(t, s))
+	}
+}
+
+// TestOnlyAnEvidentialPassMayRetract.
+//
+// The same rule the absence gates keep: a reappearance on a pass we could not
+// read properly is not evidence of anything, and retracting on one would undo a
+// correct link because of a soft block.
+func TestOnlyAnEvidentialPassMayRetract(t *testing.T) {
+	s := openTemp(t)
+	ctx := context.Background()
+	id := addTestWatch(t, s, "наблюдение", 300)
+
+	first := aLinkable(100, "iPhone 15, 128 ГБ")
+	for _, at := range []int64{1000, 1200} {
+		if _, err := s.SavePass(ctx, aDesktopPass(id, at),
+			[]avito.Listing{first}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := s.DB().Exec(`
+		UPDATE listings SET state = 'vanished', last_seen_at = 1300
+		WHERE item_id = 100`); err != nil {
+		t.Fatal(err)
+	}
+	second := aLinkable(200, "iPhone 15, 128 ГБ")
+	if _, err := s.SavePass(ctx, aDesktopPass(id, 1400),
+		[]avito.Listing{second}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Seen again, but on a pass whose extraction warned. That is a reading we
+	// do not argue from.
+	degraded := aDesktopPass(id, 1600)
+	degraded.Degraded = true
+	if _, err := s.SavePass(ctx, degraded,
+		[]avito.Listing{first, second}); err != nil {
+		t.Fatal(err)
+	}
+	links, err := s.RepostLinks(ctx, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(links) != 1 || links[0].State != "linked" {
+		t.Errorf("a degraded pass retracted a link: %+v", links)
+	}
+}

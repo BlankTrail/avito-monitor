@@ -8,6 +8,7 @@ import (
 	"fmt"
 
 	"github.com/BlankTrail/avito-monitor/internal/repost"
+	"github.com/BlankTrail/avito-monitor/internal/track"
 )
 
 // linkArrival decides whether this arrival is a seller re-publishing something
@@ -146,4 +147,64 @@ func (s *Store) RepostOf(ctx context.Context, itemID int64) (int64, error) {
 		return 0, fmt.Errorf("store: repost of %d: %w", itemID, err)
 	}
 	return predecessor, nil
+}
+
+// retractLinksFrom undoes every link built on a listing's death, because it is
+// back and therefore never died.
+//
+// The spec calls this the automatic half of undo: the same three acts as
+// pressing «это не перепубликация» — the link stops being one, the thread
+// splits, and the person who was told «выложено заново» is told it was wrong —
+// but without a pin. A pin records a person's judgement, and this is not one:
+// the site simply showed us the listing again, and a future pair really might
+// be a repost.
+func retractLinksFrom(ctx context.Context, tx *sql.Tx, p Pass, passID, itemID int64) error {
+	rows, err := tx.QueryContext(ctx, `
+		SELECT successor_id FROM repost_links
+		WHERE predecessor_id = ? AND state = 'linked'`, itemID)
+	if err != nil {
+		return fmt.Errorf("store: retract %d: %w", itemID, err)
+	}
+	var successors []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return fmt.Errorf("store: retract %d: %w", itemID, err)
+		}
+		successors = append(successors, id)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("store: retract %d: %w", itemID, err)
+	}
+	if len(successors) == 0 {
+		return nil
+	}
+
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE repost_links
+		SET state = 'retracted', decided_by = 'reappeared', decided_at = ?
+		WHERE predecessor_id = ? AND state = 'linked'`,
+		p.StartedAt, itemID); err != nil {
+		return fmt.Errorf("store: retract %d: %w", itemID, err)
+	}
+
+	for _, successor := range successors {
+		if err := recomputeThreadTx(ctx, tx, successor); err != nil {
+			return err
+		}
+		// Said out loud. Somebody was told «выложено заново, вместо N», and a
+		// correction that only changed a database row would leave them holding
+		// a message that is now false.
+		if err := insertChange(ctx, tx, ChangeRow{
+			Kind: track.KindRepostRetracted, ItemID: successor,
+			WatchID: p.WatchID, PassID: &passID, TS: p.StartedAt,
+			Field: "predecessor", Was: fmt.Sprint(itemID),
+			HadBefore: true, Confidence: 1.0, Producer: "window",
+		}); err != nil {
+			return err
+		}
+	}
+	return recomputeThreadTx(ctx, tx, itemID)
 }

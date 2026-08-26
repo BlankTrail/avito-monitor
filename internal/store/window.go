@@ -115,6 +115,19 @@ func produceWindow(
 		if err := insertChange(ctx, tx, row); err != nil {
 			return err
 		}
+
+		// A listing we had declared gone, seen again. It never died, so every
+		// link built on its death is wrong and retracts itself.
+		//
+		// Only on an evidential pass, the same rule the absence gates keep: a
+		// reappearance on a pass we could not read properly is not evidence of
+		// anything, and retracting on one would undo a correct link because of
+		// a soft block.
+		if kind == track.KindListingReturned && p.Evidential {
+			if err := retractLinksFrom(ctx, tx, p, passID, l.ItemID); err != nil {
+				return err
+			}
+		}
 	}
 
 	if !cmp.Admissible {
