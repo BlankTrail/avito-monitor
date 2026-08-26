@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/BlankTrail/avito-monitor/internal/store"
+	"github.com/BlankTrail/avito-monitor/internal/transport"
 )
 
 func addWatchForm(name, u string, intervalSec int) url.Values {
@@ -246,26 +247,34 @@ func TestTheSurfaceLabelSaysWhatEachOneActuallyDoes(t *testing.T) {
 	if strings.Contains(body, "больше карточек") {
 		t.Error("the label still claims mobile has more cards")
 	}
+	// On the free route the desktop option is not a choice, and the screen has
+	// to say so: it halts on request one, measured.
+	if !strings.Contains(body, "встаёт на капче") {
+		t.Error("the screen does not say that desktop halts in direct mode")
+	}
 	if !strings.Contains(body, "не отдаёт ни продавца") {
 		t.Error("the screen does not say what the mobile surface leaves out")
-	}
-	if !strings.Contains(body, "пока не собирает") {
-		t.Error("the screen does not say that the desktop surface collects nothing")
 	}
 	if !strings.Contains(body, "avitomon enrich") {
 		t.Error("the screen does not say how the missing seller is recovered")
 	}
 }
 
-// TestANewWatchIsOfferedTheSurfaceThatActuallyCollects.
+// TestTheDefaultSurfaceFollowsTheTransport.
 //
-// Increment 7A made desktop the default because mobile carries none of what the
-// repost ladder reads. A live run took it back the same day: the desktop search
-// page is a shell carrying a canonical URL and no listings, and nothing here
-// follows it — a desktop watch collects zero. The screen says so rather than
-// offering a choice that quietly does nothing.
-func TestANewWatchIsOfferedTheSurfaceThatActuallyCollects(t *testing.T) {
-	body := get(t, newServer(t), "/").Body.String()
+// Not a preference — measured on live Avito from one machine within minutes.
+// Direct mode met a geetest challenge on request one to www.avito.ru and never
+// met one on m.avito.ru; through BlankTrail the desktop page answered and,
+// with its canonical link followed, filled 49 of 50 sellers against mobile's
+// none. So direct gets the only surface that answers and BlankTrail gets the
+// one that carries what the repost ladder reads.
+func TestTheDefaultSurfaceFollowsTheTransport(t *testing.T) {
+	s := newServer(t)
+	if err := s.Store.SetTransportMode(context.Background(),
+		transport.ModeDirect); err != nil {
+		t.Fatal(err)
+	}
+	body := get(t, s, "/").Body.String()
 	i := strings.Index(body, `name="surface"`)
 	if i < 0 {
 		t.Fatal("no surface control on the page")
@@ -278,13 +287,13 @@ func TestANewWatchIsOfferedTheSurfaceThatActuallyCollects(t *testing.T) {
 	if strings.Contains(sel, `value="desktop" selected`) {
 		t.Error("both options are selected")
 	}
-	// Desktop is still offered — somebody may fix the shell-follow — but the
-	// option says what it does today rather than looking like a live choice.
+	// Desktop stays on the list — it works through BlankTrail — but direct
+	// mode is told plainly why it is not a choice here.
 	if !strings.Contains(sel, `value="desktop"`) {
 		t.Error("the desktop surface is no longer offered at all")
 	}
-	if !strings.Contains(sel, "пока не собирает") {
-		t.Error("the desktop option does not say that it collects nothing")
+	if !strings.Contains(body, "встаёт на капче") {
+		t.Error("direct mode is not told why desktop is not a choice for it")
 	}
 	if !strings.Contains(body, "не отдаёт ни продавца") {
 		t.Error("the screen stopped saying what the mobile surface leaves out")

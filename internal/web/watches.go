@@ -15,6 +15,7 @@ import (
 	"github.com/BlankTrail/avito-monitor/internal/ru"
 	"github.com/BlankTrail/avito-monitor/internal/rules"
 	"github.com/BlankTrail/avito-monitor/internal/store"
+	"github.com/BlankTrail/avito-monitor/internal/transport"
 )
 
 // minIntervalSec is the floor on how often a watch may be polled.
@@ -35,12 +36,41 @@ const minIntervalSec = 120
 const maxPagesPerPass = 10
 
 func (s *Server) watchesPage(w http.ResponseWriter, r *http.Request) {
-	// Mobile, and the reason is measured rather than preferred: the desktop
-	// search page is a shell that carries a canonical URL and no listings, and
-	// nothing in this product follows it. A desktop watch collects zero. See
-	// the form's own comment below.
-	s.renderWatches(w, r, "", store.Watch{Surface: avito.SurfaceMobile,
+	// The default surface follows the transport, because the two surfaces do
+	// not answer the same way to the two transports. Measured on live Avito,
+	// 25 August 2026: direct mode met a geetest challenge on request one to
+	// www.avito.ru and never saw one on m.avito.ru; through BlankTrail the
+	// desktop page answered and, once its canonical link is followed, filled
+	// 49 of 50 sellers against mobile's none.
+	//
+	// So: direct gets the only surface that answers, BlankTrail gets the one
+	// that carries what the repost ladder reads. Neither is a preference.
+	surface := avito.SurfaceMobile
+	if mode, err := s.Store.TransportMode(r.Context()); err == nil &&
+		mode == transport.ModeBlankTrail {
+		surface = avito.SurfaceDesktop
+	}
+	s.renderWatches(w, r, "", store.Watch{Surface: surface,
 		MaxPages: 1, IntervalSec: 300})
+}
+
+// surfaceAdvice is which surface this installation can actually use.
+//
+// Measured on live Avito, 25 August 2026, from one machine within minutes:
+// direct mode met a geetest challenge on its first request to www.avito.ru and
+// never met one on m.avito.ru. Through BlankTrail the desktop page answered.
+// So the advice is not a preference and it is not the same for both modes.
+func surfaceAdvice(mode transport.Mode) string {
+	if mode == transport.ModeBlankTrail {
+		return "Через BlankTrail работают обе. Десктопная несёт продавца, " +
+			"категорию, координаты и фотографии — без них перевыкладки " +
+			"не связываются, — и стоит вдвое дороже в запросах."
+	}
+	return "В прямом режиме десктопная версия встаёт на капче с первого " +
+		"запроса: этот режим её проходить не умеет. Мобильная работает, " +
+		"но не отдаёт ни продавца, ни категорию, ни координаты, ни " +
+		"описание — дополнить можно командой «avitomon enrich», по одному " +
+		"запросу на объявление, и она тоже требует BlankTrail."
 }
 
 // renderWatches draws the list, the budget and the form.
@@ -61,6 +91,11 @@ func (s *Server) renderWatches(w http.ResponseWriter, r *http.Request, problem s
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	// The mode decides which surface this installation can use at all, so the
+	// form is drawn knowing it. An unreadable or unchosen setting falls back to
+	// direct, which is the more restrictive advice — better to under-promise a
+	// surface than to point somebody at one that halts on request one.
+	mode, _ := s.Store.TransportMode(ctx)
 
 	var body strings.Builder
 
@@ -86,7 +121,7 @@ func (s *Server) renderWatches(w http.ResponseWriter, r *http.Request, problem s
 	if problem != "" {
 		body.WriteString(`<div class="card">` + note("bad", problem) + `</div>`)
 	}
-	body.WriteString(watchForm(draft))
+	body.WriteString(watchForm(draft, mode))
 
 	s.render(w, r, page{Title: "Наблюдения", Body: rawHTML(body.String())})
 }
@@ -154,7 +189,7 @@ func (s *Server) watchTable(ctx context.Context, watches []store.Watch) string {
 	return b.String()
 }
 
-func watchForm(d store.Watch) string {
+func watchForm(d store.Watch, mode transport.Mode) string {
 	var b strings.Builder
 	b.WriteString(`<div class="card"><h2>Добавить наблюдение</h2>`)
 	b.WriteString(`<form method="post" action="/watches">`)
@@ -172,35 +207,30 @@ func watchForm(d store.Watch) string {
 	// The two surfaces, and the honest state of both.
 	//
 	// The label once said mobile carried more cards. It carries thirty against
-	// desktop's fifty — that was simply backwards, and it was the only thing on
-	// this screen helping somebody choose.
+	// desktop's fifty — that was simply backwards, and it was the only thing
+	// on this screen helping somebody choose.
 	//
-	// Increment 7A then made desktop the default, because the mobile payload
-	// carries no seller, no category, no location, no coordinates and no
-	// description (0 of 30, measured) and the repost ladder reads all of them.
-	// A live run took that back the same day: the desktop search page is a
-	// 358 KB shell carrying a canonical URL and no listings, and nothing in
-	// this product follows it. A desktop watch collects zero, and it collects
-	// zero after clearing a geetest challenge the mobile page never saw.
+	// What replaced it is measured. Desktop page one is a shell carrying a
+	// canonical URL; the transport now follows it, so one desktop page costs
+	// two requests and yields fifty listings carrying the seller, the
+	// category, the coordinates and the images. Mobile costs one request,
+	// yields thirty, and carries none of that.
 	//
-	// So mobile is the default again, for the plainest possible reason: it is
-	// the only surface that collects anything. What it costs is stated below
-	// and recovered by «avitomon enrich», which reads a listing's own page —
-	// a canonical URL, not a shell — and does work.
+	// The catch is the transport. In direct mode www.avito.ru met a geetest
+	// challenge on request one and m.avito.ru never did, so on the free route
+	// the desktop option is not a choice at all — which is why the default
+	// follows the mode rather than a preference, and why the hint says which
+	// mode the reader is on.
 	b.WriteString(`<label class="field"><span class="label">Версия сайта</span>` +
 		`<select class="input" name="surface">` +
-		fmt.Sprintf(`<option value="mobile"%s>мобильная — один запрос на `+
-			`страницу, 30 объявлений</option>`,
-			selected(d.Surface != avito.SurfaceDesktop)) +
-		fmt.Sprintf(`<option value="desktop"%s>десктопная — пока не собирает: `+
-			`страница выдачи отдаёт только оболочку</option>`,
+		fmt.Sprintf(`<option value="desktop"%s>десктопная — два запроса на `+
+			`страницу, 50 объявлений, с продавцом и фотографиями</option>`,
 			selected(d.Surface == avito.SurfaceDesktop)) +
+		fmt.Sprintf(`<option value="mobile"%s>мобильная — один запрос, `+
+			`30 объявлений, без продавца</option>`,
+			selected(d.Surface != avito.SurfaceDesktop)) +
 		`</select>` +
-		`<span class="hint">Мобильная выдача не отдаёт ни продавца, ни ` +
-		`категорию, ни координаты, ни описание. Перевыкладки по таким ` +
-		`объявлениям не связываются, пока продавец неизвестен; дополнить ` +
-		`можно командой «avitomon enrich» — по одному запросу на ` +
-		`объявление.</span>` +
+		`<span class="hint">` + surfaceAdvice(mode) + `</span>` +
 		`</label>`)
 	b.WriteString(`<button class="primary" type="submit">Добавить</button>`)
 	b.WriteString(`</form></div>`)

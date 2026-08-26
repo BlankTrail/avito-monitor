@@ -3,10 +3,13 @@
 package transport
 
 import (
+	"compress/gzip"
 	"context"
 	"errors"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -647,5 +650,171 @@ func TestTheByteCountIsTheLastReplyAndNotTheSum(t *testing.T) {
 	}
 	if res.Bytes != len(okBody) {
 		t.Errorf("Bytes = %d, want the %d of the reply it kept", res.Bytes, len(okBody))
+	}
+}
+
+// fixtureBody reads one of avito's captured pages.
+//
+// Across the package boundary rather than copied in. These are two and a half
+// megabytes of real Avito, and a second copy would be a second thing to keep in
+// step — the shell-follow is exactly the behaviour that must be driven by the
+// real shell and not by a hand-written approximation of one. A hand-written
+// approximation is in fact what failed first here: it tripped the extractor's
+// «no Cyrillic» guard and then its state-block selection, and each failure was
+// a property of the stub rather than of the code under test.
+func fixtureBody(t *testing.T, name string) string {
+	t.Helper()
+	f, err := os.Open(filepath.Join("..", "..", "avito", "testdata", name+".html.gz"))
+	if err != nil {
+		t.Fatalf("open fixture: %v", err)
+	}
+	defer f.Close()
+	zr, err := gzip.NewReader(f)
+	if err != nil {
+		t.Fatalf("gzip: %v", err)
+	}
+	raw, err := io.ReadAll(zr)
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	return string(raw)
+}
+
+func newDesktopFetcher(l *recordingLease, now *time.Time) *Fetcher {
+	pacer := NewPacer(PacerConfig{
+		Floor: 0, Ceiling: 100000, Window: time.Hour,
+		Now:        func() time.Time { return *now },
+		SleepUntil: func(_ context.Context, tm time.Time) error { *now = tm; return nil },
+	})
+	return NewFetcher(&stubLeaser{lease: l, caps: Caps{
+		SolvesChallenges: true, RotatesEgress: true,
+	}}, pacer, FetchConfig{
+		Surface: avito.SurfaceDesktop,
+		Now:     func() time.Time { return *now },
+		Sleep:   func(context.Context, time.Duration) error { return nil },
+	})
+}
+
+// TestTheDesktopShellIsFollowedToItsCanonicalPage.
+//
+// Page one of the desktop search is a shell carrying a canonical URL and no
+// listings — the spec says desktop costs two requests, and this is the second.
+// Without it a desktop watch collects zero, which is what a live run measured
+// on 25 August 2026 and what sent the default back to mobile.
+func TestTheDesktopShellIsFollowedToItsCanonicalPage(t *testing.T) {
+	now := time.Date(2026, 8, 25, 12, 0, 0, 0, time.UTC)
+	l := &recordingLease{warm: true, replies: []reply{
+		{200, fixtureBody(t, "desktop-spa-shell")},
+		{200, fixtureBody(t, "desktop-canonical-p1")},
+	}}
+	res, err := newDesktopFetcher(l, &now).Fetch(context.Background(),
+		"https://www.avito.ru/moskva/telefony?q=iphone+15")
+	if err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+	if l.n != 2 {
+		t.Errorf("%d requests, want the shell and then the canonical page", l.n)
+	}
+	if res.Page.Kind != avito.EnvelopeCatalog {
+		t.Errorf("Kind = %q; the shell was returned as the answer", res.Page.Kind)
+	}
+	if len(res.Page.Listings) != 50 {
+		t.Errorf("listings = %d, want the canonical page's 50", len(res.Page.Listings))
+	}
+	if res.Verdict.Class != ClassOK {
+		t.Errorf("class = %q", res.Verdict.Class)
+	}
+}
+
+// TestAShellThatLeadsToAnotherShellIsNotFollowedForever.
+//
+// One follow and no more. A redirect loop would spend a whole address's budget
+// on one page, and the site is under no obligation not to serve one.
+func TestAShellThatLeadsToAnotherShellIsNotFollowedForever(t *testing.T) {
+	now := time.Date(2026, 8, 25, 12, 0, 0, 0, time.UTC)
+	shell := fixtureBody(t, "desktop-spa-shell")
+	l := &recordingLease{warm: true, replies: []reply{
+		{200, shell}, {200, shell}, {200, shell},
+	}}
+	res, err := newDesktopFetcher(l, &now).Fetch(context.Background(),
+		"https://www.avito.ru/moskva/telefony?q=iphone+15")
+	if err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+	if l.n != 2 {
+		t.Errorf("%d requests, want the shell and one follow", l.n)
+	}
+	// And the shell comes back as what it is rather than dressed up as an
+	// answer: a redirect envelope with no listings is a fact worth seeing.
+	if res.Page.Kind != avito.EnvelopeRedirect {
+		t.Errorf("Kind = %q", res.Page.Kind)
+	}
+}
+
+// TestTheFollowIsPacedLikeAnyOtherRequest.
+//
+// It is a second request to the same site from the same address, and a page
+// that quietly cost two requests against a budget counted in one is how an
+// address gets burned by arithmetic nobody did.
+func TestTheFollowIsPacedLikeAnyOtherRequest(t *testing.T) {
+	now := time.Date(2026, 8, 25, 12, 0, 0, 0, time.UTC)
+	l := &recordingLease{warm: true, replies: []reply{
+		{200, fixtureBody(t, "desktop-spa-shell")},
+		{200, fixtureBody(t, "desktop-canonical-p1")},
+	}}
+	var waits int
+	pacer := NewPacer(PacerConfig{
+		Floor: time.Second, Ceiling: 100000, Window: time.Hour,
+		Now: func() time.Time { return now },
+		SleepUntil: func(_ context.Context, tm time.Time) error {
+			waits++
+			now = tm
+			return nil
+		},
+	})
+	f := NewFetcher(&stubLeaser{lease: l, caps: Caps{SolvesChallenges: true}},
+		pacer, FetchConfig{
+			Surface: avito.SurfaceDesktop,
+			Now:     func() time.Time { return now },
+			Sleep:   func(context.Context, time.Duration) error { return nil },
+		})
+	res, err := f.Fetch(context.Background(),
+		"https://www.avito.ru/moskva/telefony?q=iphone+15")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Two turns of the loop, and the loop paces at its head — so a follow that
+	// shows up as a second attempt is a follow that went through the pacer.
+	if res.Attempts != 2 {
+		t.Errorf("attempts = %d, want the shell and the follow", res.Attempts)
+	}
+	// One wait for two requests, not two: the gap is BETWEEN them, and the
+	// first needed none on a warm session. Zero would mean the follow slipped
+	// past the pacer entirely.
+	if waits != 1 {
+		t.Errorf("the pacer slept %d times between two requests, want 1", waits)
+	}
+}
+
+// TestATwoRequestPassReportsBothItsRequests.
+//
+// passes.bytes exists to say what a pass cost, and a desktop pass costs the
+// shell as well as the page it points at. Reporting only the second is the same
+// under-reporting this column already had once, when Body was dropped on
+// success and every clean pass recorded zero.
+func TestATwoRequestPassReportsBothItsRequests(t *testing.T) {
+	now := time.Date(2026, 8, 25, 12, 0, 0, 0, time.UTC)
+	shell := fixtureBody(t, "desktop-spa-shell")
+	canonical := fixtureBody(t, "desktop-canonical-p1")
+	l := &recordingLease{warm: true, replies: []reply{
+		{200, shell}, {200, canonical},
+	}}
+	res, err := newDesktopFetcher(l, &now).Fetch(context.Background(),
+		"https://www.avito.ru/moskva/telefony?q=iphone+15")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := len(shell) + len(canonical); res.Bytes != want {
+		t.Errorf("Bytes = %d, want %d — the shell went uncounted", res.Bytes, want)
 	}
 }

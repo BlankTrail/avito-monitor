@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/BlankTrail/avito-monitor/avito"
 	"github.com/BlankTrail/avito-monitor/internal/ru"
 	"github.com/BlankTrail/avito-monitor/internal/store"
 	"github.com/BlankTrail/avito-monitor/internal/transport"
@@ -66,7 +67,21 @@ func CostPerMinute(w store.Watch) float64 {
 		// A pass that fetched nothing would not be a pass.
 		pages = 1
 	}
-	return float64(pages) * 60 / float64(w.IntervalSec)
+	return float64(pages*requestsPerPage(w.Surface)) * 60 / float64(w.IntervalSec)
+}
+
+// requestsPerPage is what one page of a surface actually costs.
+//
+// Two on desktop and one on mobile, and this is not a detail. The desktop
+// search page answers with a shell carrying a canonical URL; the listings are
+// on the page that URL names, so the transport fetches both. A budget that
+// counted one would let somebody schedule twice what their address can carry
+// and learn the arithmetic as a ban.
+func requestsPerPage(surface avito.Surface) int {
+	if surface == avito.SurfaceDesktop {
+		return 2
+	}
+	return 1
 }
 
 // BudgetFor is the arithmetic for a set of watches.
