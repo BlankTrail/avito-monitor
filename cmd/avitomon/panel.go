@@ -83,6 +83,21 @@ func panelCmd(args []string) error {
 func buildPanel(s *store.Store) *web.Server {
 	srv := &web.Server{Store: s, Now: time.Now}
 
+	// The replay behind «Это не перепубликация». The panel does the pin and the
+	// split itself; this is the third act, and it lives here because
+	// enqueueing a message means rendering one and internal/web must not learn
+	// how a notification is worded.
+	//
+	// It writes a listing-appeared change and runs the rules over that one
+	// change immediately, rather than leaving it for the next pass. A person
+	// who has just corrected the product should not have to wait five minutes
+	// to find out whether the correction produced anything — and the change is
+	// written whatever the rules decide, so the record of it is not contingent
+	// on a rule existing.
+	srv.ReplayAppearance = func(ctx context.Context, itemID int64) (int, error) {
+		return replayAppearance(ctx, s, itemID)
+	}
+
 	srv.CheckBlankTrail = func(ctx context.Context, url, apiKey string) error {
 		c, err := blanktrail.NewClient(url, apiKey)
 		if err != nil {

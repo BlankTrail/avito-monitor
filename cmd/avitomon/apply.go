@@ -127,3 +127,29 @@ func subjectFor(named map[int64]store.ListingName, w store.Watch, c store.Change
 		WatchName: w.Name, Title: n.Title, URLPath: n.URLPath,
 	}
 }
+
+// replayAppearance re-announces a listing whose new-listing message a repost
+// link withheld.
+//
+// The spec calls it «the suppressed alert is replayed, marked as a corrected
+// suppression». The mark is the change's own producer: 'user' says a person
+// caused this rather than a pass, which is what distinguishes it in the log
+// from an ordinary appearance arriving hours late for no stated reason.
+func replayAppearance(ctx context.Context, s *store.Store, itemID int64) (int, error) {
+	watchID, err := s.FirstWatchOf(ctx, itemID)
+	if err != nil {
+		return 0, err
+	}
+	w, err := s.Watch(ctx, watchID)
+	if err != nil {
+		return 0, err
+	}
+	now := time.Now().Unix()
+	if err := s.RecordUserChange(ctx, store.ChangeRow{
+		Kind: track.KindListingAppeared, ItemID: itemID, WatchID: watchID,
+		TS: now, HasNow: true, Confidence: 1.0, Producer: "user",
+	}); err != nil {
+		return 0, err
+	}
+	return applyRules(ctx, s, w, now)
+}

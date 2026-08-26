@@ -208,3 +208,48 @@ func retractLinksFrom(ctx context.Context, tx *sql.Tx, p Pass, passID, itemID in
 	}
 	return recomputeThreadTx(ctx, tx, itemID)
 }
+
+// FirstWatchOf is the watch that first saw a listing.
+//
+// The panel's replay needs a watch to run rules for, and a listing may belong
+// to several. The first is the honest pick: it is the one whose seeding pass
+// created the row, and it is what listings.first_watch_id has recorded since
+// increment 3 for exactly this kind of question.
+func (s *Store) FirstWatchOf(ctx context.Context, itemID int64) (int64, error) {
+	var watchID sql.NullInt64
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT first_watch_id FROM listings WHERE item_id = ?`, itemID).
+		Scan(&watchID); err != nil {
+		return 0, fmt.Errorf("store: first watch of %d: %w", itemID, err)
+	}
+	if !watchID.Valid || watchID.Int64 == 0 {
+		// Fall back to any watch that has it now. A listing whose creating
+		// watch was deleted still deserves its correction.
+		if err := s.db.QueryRowContext(ctx,
+			`SELECT watch_id FROM watch_members WHERE item_id = ? LIMIT 1`, itemID).
+			Scan(&watchID); err != nil {
+			return 0, fmt.Errorf("store: first watch of %d: %w", itemID, err)
+		}
+	}
+	return watchID.Int64, nil
+}
+
+// RecordUserChange writes a change a person caused rather than a pass.
+//
+// Outside any pass transaction, because there is no pass: the person pressed a
+// button. Producer is theirs to set and PassID stays nil, which is what keeps
+// «this happened because somebody corrected us» distinguishable in the log from
+// «this happened because the site changed».
+func (s *Store) RecordUserChange(ctx context.Context, c ChangeRow) error {
+	s.wmu.Lock()
+	defer s.wmu.Unlock()
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("store: user change: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := insertChange(ctx, tx, c); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
