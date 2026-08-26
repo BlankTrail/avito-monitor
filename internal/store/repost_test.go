@@ -7,7 +7,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/BlankTrail/avito-monitor/avito"
 	"github.com/BlankTrail/avito-monitor/internal/repost"
+	"github.com/BlankTrail/avito-monitor/internal/track"
 )
 
 const thirtyDays int64 = 30 * 24 * 60 * 60
@@ -315,5 +317,261 @@ func TestADecisionIsKeptWhateverItWas(t *testing.T) {
 	}
 	if len(got.Evidence) != 1 || got.Evidence[0].Detail != "разные продавцы" {
 		t.Errorf("the evidence was lost: %+v", got.Evidence)
+	}
+}
+
+// aSeller writes one seller and returns its id.
+func aSeller(t *testing.T, s *Store, key string) int64 {
+	t.Helper()
+	res, err := s.DB().Exec(`
+		INSERT INTO sellers (seller_key, key_quality, first_seen_at, last_seen_at)
+		VALUES (?, 'slug', 1000, 1000)`, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
+// aLinkable is a listing carrying everything the strong rung needs.
+func aLinkable(itemID int64, title string) avito.Listing {
+	l := aListing()
+	l.ItemID = itemID
+	l.Title = title
+	l.SellerKey, l.SellerKeyQuality = "brand:one", "slug"
+	l.MicroCategoryID, l.CategoryRootID, l.LocationID = 1104365, 9, 637640
+	l.Description = "Продаю телефон, состояние отличное."
+	l.ImageKey = "https://90.img.avito.st/image/1/1.ureJN7aAFl"
+	return l
+}
+
+func kindsOf(t *testing.T, s *Store) []string {
+	t.Helper()
+	rows, err := s.DB().Query(`SELECT kind FROM changes ORDER BY id`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var k string
+		if err := rows.Scan(&k); err != nil {
+			t.Fatal(err)
+		}
+		out = append(out, k)
+	}
+	return out
+}
+
+// TestASellerWhoRepublishesProducesARepostAndNotANewListing.
+//
+// The increment's own demonstrable, as a test. A repost announced as a new
+// listing is the noise that gets a monitor switched off in its first week.
+func TestASellerWhoRepublishesProducesARepostAndNotANewListing(t *testing.T) {
+	s := openTemp(t)
+	ctx := context.Background()
+	id := addTestWatch(t, s, "наблюдение", 300)
+
+	// The first incarnation, seen twice so the watch has a comparable pass
+	// behind it — the passes below must be readings and not re-seeds, because
+	// the linker is deliberately off on a re-seed.
+	first := aLinkable(100, "iPhone 15, 128 ГБ")
+	for _, at := range []int64{1000, 1200} {
+		if _, err := s.SavePass(ctx, aDesktopPass(id, at),
+			[]avito.Listing{first}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := s.DB().Exec(`
+		UPDATE listings SET state = 'vanished', state_at = 1300, last_seen_at = 1300
+		WHERE item_id = 100`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.DB().Exec(`DELETE FROM changes`); err != nil {
+		t.Fatal(err)
+	}
+
+	// The same advertisement under a new number, shortly after.
+	second := aLinkable(200, "iPhone 15, 128 ГБ")
+	if _, err := s.SavePass(ctx, aDesktopPass(id, 1400),
+		[]avito.Listing{second}); err != nil {
+		t.Fatal(err)
+	}
+
+	kinds := kindsOf(t, s)
+	for _, k := range kinds {
+		if k == string(track.KindListingAppeared) {
+			t.Errorf("a repost was announced as a new listing: %v", kinds)
+		}
+	}
+	found := false
+	for _, k := range kinds {
+		if k == string(track.KindListingReposted) {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("no listing-reposted change: %v", kinds)
+	}
+
+	// And the two are one thread, so a price chart is one line.
+	if got := threadOf(t, s, 200); got != 100 {
+		t.Errorf("the successor is in thread %d, want the predecessor's 100", got)
+	}
+	// And the notifier can find the predecessor, which is what makes
+	// suppress.Decide answer ReasonRepost.
+	predecessor, err := s.RepostOf(ctx, 200)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if predecessor != 100 {
+		t.Errorf("RepostOf = %d, want 100", predecessor)
+	}
+}
+
+// TestADealerWithIdenticalLivePhonesProducesNoLinks.
+//
+// The measured common case: one ordinary page carried four pairs sharing a full
+// repost key with both members alive at once. Every one of them must produce an
+// ordinary new-listing alert.
+func TestADealerWithIdenticalLivePhonesProducesNoLinks(t *testing.T) {
+	s := openTemp(t)
+	ctx := context.Background()
+	id := addTestWatch(t, s, "наблюдение", 300)
+
+	var stock []avito.Listing
+	for i := 0; i < 8; i++ {
+		stock = append(stock, aLinkable(int64(100+i), "iPhone 15, 128 ГБ"))
+	}
+	for _, at := range []int64{1000, 1200} {
+		if _, err := s.SavePass(ctx, aDesktopPass(id, at), stock); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := s.DB().Exec(`DELETE FROM changes`); err != nil {
+		t.Fatal(err)
+	}
+
+	// A ninth, while all eight are still alive.
+	ninth := aLinkable(200, "iPhone 15, 128 ГБ")
+	if _, err := s.SavePass(ctx, aDesktopPass(id, 1400),
+		append(stock, ninth)); err != nil {
+		t.Fatal(err)
+	}
+
+	links, err := s.RepostLinks(ctx, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, l := range links {
+		if l.State == "linked" {
+			t.Errorf("a live duplicate was linked: %+v", l)
+		}
+	}
+	kinds := kindsOf(t, s)
+	if len(kinds) != 1 || kinds[0] != string(track.KindListingAppeared) {
+		t.Errorf("changes = %v, want one ordinary new-listing alert", kinds)
+	}
+}
+
+// TestARefusalIsWrittenDownAllTheSame.
+//
+// «Почему мне не сказали про это объявление» has to be answerable for the pairs
+// that were considered and refused, not only for the ones that were linked.
+//
+// The refusal exercised here is a predecessor that only left the window, which
+// is a judgement the gates make and the candidate query does not.
+//
+// Most refusals never reach the gates at all, and that is deliberate. A
+// different seller or a different category produces a different repost_key, so
+// the two are never in the same bucket. A pair that co-existed is cut by the
+// candidate query, which requires the predecessor to have been last seen before
+// the arrival — otherwise a dealer with eight identical live phones would write
+// eight rejection rows on every arrival, which is noise for something refused
+// by arithmetic rather than by judgement.
+func TestARefusalIsWrittenDownAllTheSame(t *testing.T) {
+	s := openTemp(t)
+	ctx := context.Background()
+	id := addTestWatch(t, s, "наблюдение", 300)
+
+	mine := aLinkable(100, "iPhone 15, 128 ГБ")
+	for _, at := range []int64{1000, 1200} {
+		if _, err := s.SavePass(ctx, aDesktopPass(id, at),
+			[]avito.Listing{mine}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// It left page one, which is not the same as having ended: that happens to
+	// every listing on a busy query within the hour, and a merge built on it
+	// would be built on nothing.
+	if _, err := s.DB().Exec(`
+		UPDATE listings SET state = 'left-window', last_seen_at = 1300
+		WHERE item_id = 100`); err != nil {
+		t.Fatal(err)
+	}
+
+	second := aLinkable(200, "iPhone 15, 128 ГБ")
+	if _, err := s.SavePass(ctx, aDesktopPass(id, 1400),
+		[]avito.Listing{second}); err != nil {
+		t.Fatal(err)
+	}
+
+	links, err := s.RepostLinks(ctx, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(links) == 0 {
+		t.Fatal("a refused pair left no record at all")
+	}
+	if links[0].State != "rejected" {
+		t.Errorf("state = %q", links[0].State)
+	}
+	if len(links[0].Evidence) == 0 || links[0].Evidence[0].Detail == "" {
+		t.Errorf("the refusal carries no reason: %+v", links[0].Evidence)
+	}
+}
+
+// TestASeedingPassLinksNothing.
+//
+// A re-seed's arrivals are a whole page appearing at once. Running the linker
+// over them would turn a gap in collection into a page of reposts.
+func TestASeedingPassLinksNothing(t *testing.T) {
+	s := openTemp(t)
+	ctx := context.Background()
+	id := addTestWatch(t, s, "наблюдение", 300)
+
+	// Two passes, because a seed is not an admissible pass and the re-seed
+	// rule is «too long since the last ADMISSIBLE one». Without the second
+	// there is nothing for the gap to be measured from.
+	first := aLinkable(100, "iPhone 15, 128 ГБ")
+	for _, at := range []int64{1000, 1200} {
+		if _, err := s.SavePass(ctx, aDesktopPass(id, at),
+			[]avito.Listing{first}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := s.DB().Exec(`
+		UPDATE listings SET state = 'vanished', last_seen_at = 1300
+		WHERE item_id = 100`); err != nil {
+		t.Fatal(err)
+	}
+
+	// Far enough ahead that the pass is a re-seed rather than a reading.
+	p := aDesktopPass(id, 1200+int64(300*10))
+	second := aLinkable(200, "iPhone 15, 128 ГБ")
+	if _, err := s.SavePass(ctx, p, []avito.Listing{second}); err != nil {
+		t.Fatal(err)
+	}
+	links, err := s.RepostLinks(ctx, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, l := range links {
+		if l.State == "linked" {
+			t.Errorf("a re-seed linked something: %+v", l)
+		}
 	}
 }

@@ -41,7 +41,7 @@ func produceWindow(
 	ctx context.Context, tx *sql.Tx,
 	p Pass, passID int64, listings []avito.Listing,
 	previous map[int64]bool, arrivals int,
-	adm, cmp lifecycle.Verdict, w Watch,
+	adm, cmp lifecycle.Verdict, w Watch, store *Store,
 ) error {
 	// An arrival that cannot be compared with anything is marked backfill. A
 	// seed's arrivals are real but are not news; and an incomparable pass's
@@ -67,12 +67,52 @@ func produceWindow(
 		if firstSeen == p.StartedAt {
 			kind = track.KindListingAppeared
 		}
-		if err := insertChange(ctx, tx, ChangeRow{
+
+		// A listing seen for the first time may be a seller re-publishing
+		// something they had already posted. Decided here, inside the pass
+		// transaction, because the answer changes what this pass announces —
+		// deciding it afterwards would mean the alert had already gone out.
+		//
+		// Gated on admissibility and not on the backfill flag above, and the
+		// difference is the point. Backfill also covers an incomparable pass —
+		// one whose identity changed — and lifecycle/compare.go says plainly
+		// what that means: «its arrivals are real. What it cannot do is
+		// confirm that anything LEFT.» A changed identity is a different slice
+		// of the market, which is a fact about departures.
+		//
+		// What the linker must not run on is a whole page arriving at once: a
+		// seed, or a re-seed after a gap in collection. Both are exactly what
+		// makes a pass inadmissible, and running the linker over one would
+		// turn a weekend the laptop was asleep into a page of reposts.
+		var repostOf int64
+		if kind == track.KindListingAppeared && !p.IsSeed && adm.Admissible {
+			var err error
+			if repostOf, err = linkArrival(ctx, tx, store, l.ItemID, w,
+				p.StartedAt); err != nil {
+				return err
+			}
+			if repostOf != 0 {
+				kind = track.KindListingReposted
+			}
+		}
+
+		row := ChangeRow{
 			Kind: kind, ItemID: l.ItemID, WatchID: p.WatchID,
 			PassID: &passID, TS: p.StartedAt,
 			Confidence: 1.0, Producer: "window",
 			HasNow: true, Backfill: backfill,
-		}); err != nil {
+		}
+		if repostOf != 0 {
+			// The predecessor travels in Was, which is the column the notifier
+			// already reads for «вместо какого объявления». Confidence stays
+			// at 1.0: the link is a conclusion this pass reached and stands
+			// behind, and the ladder's own doubt is expressed by not linking
+			// rather than by linking weakly.
+			row.Was = fmt.Sprint(repostOf)
+			row.HadBefore = true
+			row.Field = "predecessor"
+		}
+		if err := insertChange(ctx, tx, row); err != nil {
 			return err
 		}
 	}
