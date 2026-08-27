@@ -164,3 +164,35 @@ func targetCmd(args []string) error {
 	}
 	return fmt.Errorf("avitomon target: не знаю команду %q", args[0])
 }
+
+// sendDue is one turn of the outbox worker, for the supervised loop.
+//
+// The ladder is rebuilt each turn on purpose. A token typed into Настройки has
+// to take effect without a restart, and a ladder held for the life of the
+// process would keep using the one that was there at boot — which is exactly
+// how a person ends up believing their new token did not save.
+func sendDue(ctx context.Context, s *store.Store) error {
+	// Checked before the ladder is built, not after. With no token every due
+	// message would be attempted, fail, and burn one of its twelve retries —
+	// so a fresh install that has not configured Telegram yet would give up on
+	// its first day's messages before anybody typed a token.
+	cfg, err := s.TelegramConfig(ctx)
+	if err != nil {
+		return err
+	}
+	if cfg.BotToken == "" && os.Getenv(tokenEnv) == "" {
+		return nil
+	}
+	sender, err := buildLadder(ctx, s, "")
+	if err != nil {
+		return err
+	}
+	w := &notify.Worker{
+		Store: s, Max: 100, Now: time.Now,
+		Transport: notify.TransportFunc(func(ctx context.Context, m notify.Message) error {
+			return sender.SendMessage(ctx, m.Address, m.Body)
+		}),
+	}
+	_, err = w.Run(ctx)
+	return err
+}
