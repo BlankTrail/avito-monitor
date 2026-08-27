@@ -6,6 +6,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/BlankTrail/avito-monitor/avito"
 	"github.com/BlankTrail/avito-monitor/internal/export"
 )
 
@@ -302,5 +303,71 @@ func TestWhatHasGoneSinksToTheBottom(t *testing.T) {
 	}
 	if len(ids) != 3 || ids[len(ids)-1] != 900 {
 		t.Fatalf("порядок = %v, ушедшее должно быть последним", ids)
+	}
+}
+
+// TestTheExportedSellerIsOneAPersonCanRead.
+//
+// The «Продавец» column used to carry this database's own row number: a file
+// opened in Excel said «Продавец: 1», which means nothing to whoever opened it
+// and something different on every install. Found by downloading the file.
+func TestTheExportedSellerIsOneAPersonCanRead(t *testing.T) {
+	s := openTemp(t)
+	ctx := context.Background()
+	wid, err := s.AddWatch(ctx, aWatch())
+	if err != nil {
+		t.Fatal(err)
+	}
+	l := aListing()
+	l.ItemID = 900
+	l.SellerKey = "brand:abc123"
+	l.SellerName = "Телефоны и точка"
+	if _, err := s.SavePass(ctx, aPass(wid, 1000), []avito.Listing{l}); err != nil {
+		t.Fatal(err)
+	}
+
+	var seen bool
+	for row, err := range s.ExportRows(ctx, ExportFilter{}) {
+		if err != nil {
+			t.Fatal(err)
+		}
+		seen = true
+		if row.SellerKey != "brand:abc123" {
+			t.Errorf("ключ продавца = %q", row.SellerKey)
+		}
+		if row.SellerName != "Телефоны и точка" {
+			t.Errorf("имя продавца = %q", row.SellerName)
+		}
+		if row.SellerID == 0 {
+			t.Error("внутренний номер тоже нужен: по нему группируют внутри файла")
+		}
+	}
+	if !seen {
+		t.Fatal("ни одной строки")
+	}
+}
+
+// TestAListingWithNoSellerExportsEmptyAndNotAZero. Most of the mobile surface
+// identifies nobody, and «0» in a column headed «Продавец» is a claim.
+func TestAListingWithNoSellerExportsEmptyAndNotAZero(t *testing.T) {
+	s := openTemp(t)
+	ctx := context.Background()
+	wid, err := s.AddWatch(ctx, aWatch())
+	if err != nil {
+		t.Fatal(err)
+	}
+	l := aListing()
+	l.ItemID = 901
+	l.SellerKey, l.SellerName = "", ""
+	if _, err := s.SavePass(ctx, aPass(wid, 1000), []avito.Listing{l}); err != nil {
+		t.Fatal(err)
+	}
+	for row, err := range s.ExportRows(ctx, ExportFilter{}) {
+		if err != nil {
+			t.Fatal(err)
+		}
+		if row.SellerKey != "" || row.SellerName != "" {
+			t.Errorf("продавца нет, а выгрузилось %q / %q", row.SellerKey, row.SellerName)
+		}
 	}
 }

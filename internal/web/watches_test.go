@@ -708,3 +708,36 @@ func TestTheFormSaysAShopLinkWorks(t *testing.T) {
 		}
 	}
 }
+
+// TestTheFreeModeIsToldItsCeilingIsNotItsThroughput.
+//
+// The budget line is the constraint every row on the screen is measured
+// against, and the same number is drawn for both transports. In the free mode
+// the ceiling and the throughput are far apart — 360 against about 250–260 —
+// and a person planning to the ceiling is planning what the free route cannot
+// keep. The pace warning says so eventually; it needs ten passes first.
+func TestTheFreeModeIsToldItsCeilingIsNotItsThroughput(t *testing.T) {
+	s := newServer(t)
+	if err := s.Store.SetTransportMode(context.Background(), transport.ModeDirect); err != nil {
+		t.Fatal(err)
+	}
+	body := get(t, s, "/").Body.String()
+	for _, want := range []string{"потолок площадки", "250", "360"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("в бюджете нет %q", want)
+		}
+	}
+}
+
+// TestThePaidModeIsNotToldSomebodyElsesTimeTax. The measurement is direct
+// mode's; attaching it to BlankTrail would be quoting a number about one
+// transport at a person using the other.
+func TestThePaidModeIsNotToldSomebodyElsesTimeTax(t *testing.T) {
+	s := newServer(t)
+	if err := s.Store.SetTransportMode(context.Background(), transport.ModeBlankTrail); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(get(t, s, "/").Body.String(), "потолок площадки") {
+		t.Error("замер прямого режима показан пользователю BlankTrail")
+	}
+}

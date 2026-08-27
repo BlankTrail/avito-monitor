@@ -56,6 +56,7 @@ const exportSelect = `
 	       coalesce(s.price_kind, 'absent'), s.price_minor,
 	       coalesce(s.currency, 'RUB'), s.discount_pct,
 	       coalesce(l.seller_id, 0),
+	       coalesce(sel.seller_key, ''), coalesce(sel.display_name, ''),
 	       m.last_position,
 	       m.first_seen_at, m.last_seen_at,
 	       coalesce(s.ts, 0), m.present,
@@ -63,6 +64,7 @@ const exportSelect = `
 	FROM watch_members m
 	JOIN watches  w ON w.id = m.watch_id
 	JOIN listings l ON l.item_id = m.item_id
+	LEFT JOIN sellers sel ON sel.id = l.seller_id
 	LEFT JOIN listing_snapshots s
 	       ON s.item_id = l.item_id
 	      AND s.ts = (SELECT max(s2.ts) FROM listing_snapshots s2
@@ -162,7 +164,7 @@ func (s *Store) ExportRows(ctx context.Context, f ExportFilter) iter.Seq2[export
 			if err := rows.Scan(&r.ItemID, &r.ThreadID, &r.WatchID, &r.WatchName,
 				&r.Title, &r.URLPath,
 				&r.PriceKind, &price, &r.Currency, &discount,
-				&r.SellerID, &r.Position,
+				&r.SellerID, &r.SellerKey, &r.SellerName, &r.Position,
 				&r.FirstSeenAt, &r.LastSeenAt, &r.SnapshotAt, &r.Present,
 				&isXL, &isReserved); err != nil {
 				yield(export.Row{}, fmt.Errorf("store: export: %w", err))
