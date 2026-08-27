@@ -60,9 +60,17 @@ func (s *Server) healthz(w http.ResponseWriter, r *http.Request) {
 		// Every watch is behind a wall. Named rather than counted: «3 halted»
 		// tells a supervisor to restart, and restarting is the one thing that
 		// cannot help.
+		//
+		// One watch gets its own sentence. «все 1 наблюдение остановлены»
+		// agrees with nothing — and one watch is what a fresh install has, so
+		// the ungrammatical branch was the one almost everybody would read.
 		w.WriteHeader(http.StatusServiceUnavailable)
-		fmt.Fprintf(w, "не собирает: все %d %s остановлены\n", enabled,
-			ru.Plural(enabled, "наблюдение", "наблюдения", "наблюдений"))
+		if enabled == 1 {
+			fmt.Fprintln(w, "не собирает: единственное наблюдение остановлено")
+		} else {
+			fmt.Fprintf(w, "не собирает: все %d %s остановлены\n", enabled,
+				ru.Plural(enabled, "наблюдение", "наблюдения", "наблюдений"))
+		}
 		for _, line := range reasons {
 			fmt.Fprintln(w, line)
 		}
