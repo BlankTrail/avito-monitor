@@ -345,8 +345,15 @@ func watchForm(d store.Watch, mode transport.Mode) string {
 	b.WriteString(`<form method="post" action="/watches">`)
 	b.WriteString(field("Название", "name", d.Name, "text",
 		"Как оно будет называться в сообщениях."))
-	b.WriteString(field("Ссылка на поиск", "url", d.URL, "text",
-		"Страница выдачи avito.ru — скопируйте её из адресной строки."))
+	// Two kinds behind one field, because a person pasting a link does not
+	// think of themselves as choosing a kind. The link says which it is, and
+	// what is worth saying here is the one case that will not work: a private
+	// seller's profile looks exactly like a shop to whoever is looking at it.
+	b.WriteString(field("Ссылка на поиск или магазин", "url", d.URL, "text",
+		"Страница выдачи avito.ru или магазин (avito.ru/brands/…) — "+
+			"скопируйте из адресной строки. За магазином следим целиком: "+
+			"версия сайта и число страниц выбираются сами. За частным "+
+			"продавцом (avito.ru/user/…) эта версия следить не умеет."))
 	b.WriteString(field("Интервал, секунды", "interval",
 		strconv.Itoa(d.IntervalSec), "number",
 		fmt.Sprintf("Не меньше %d. Чаще минуты Авито отдаёт тот же ответ, "+
@@ -357,6 +364,11 @@ func watchForm(d store.Watch, mode transport.Mode) string {
 			"второй страницы — самый громкий сигнал для площадки, "+
 			"он превращает 429 в 403, а 403 стоит уже всего пропуска.",
 			maxPagesPerPass)))
+	// Both of these are ignored for a shop, and deliberately still shown: a
+	// disabled pair of fields that reappear when the link changes is more
+	// screen machinery than this earns, and the hint on the link field already
+	// says the choice is made for you.
+	//
 	// The two surfaces, and the honest state of both.
 	//
 	// The label once said mobile carried more cards. It carries thirty against
@@ -419,7 +431,9 @@ func (s *Server) saveWatch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	now := s.now().Unix()
-	draft.Kind = "search"
+	// Kind comes from the link and was decided in watchFromForm. It used to be
+	// stamped "search" here, which was true while search was the only kind and
+	// silently wrong the moment it was not.
 	draft.AbsenceConfirmations = 2
 	draft.AbsenceMinSpanSec = 1200
 	// Due immediately. A watch somebody has just added and that does nothing
@@ -535,8 +549,20 @@ func watchFromForm(r *http.Request) (store.Watch, error) {
 	if w.Name == "" {
 		bad = append(bad, "не задано название")
 	}
-	if err := checkSearchURL(w.URL); err != nil {
+	// The URL decides the kind, and a shop decides its own surface and page
+	// count. A seller page is already canonical: one request, no shell hop, no
+	// second page — and the mobile spelling of one was never measured, so
+	// offering it would be an unmeasured claim in the one place this product
+	// promises to watch a competitor.
+	parsed, err := checkSearchURL(w.URL)
+	if err != nil {
 		bad = append(bad, err.Error())
+	} else if parsed.Kind == avito.KindSeller {
+		w.Kind = string(avito.KindSeller)
+		w.Surface = avito.SurfaceDesktop
+		w.MaxPages = 1
+	} else {
+		w.Kind = string(avito.KindSearch)
 	}
 	if w.IntervalSec < minIntervalSec {
 		bad = append(bad, fmt.Sprintf(
@@ -544,7 +570,8 @@ func watchFromForm(r *http.Request) (store.Watch, error) {
 				"с точностью до байта, так что запросы тратятся впустую",
 			minIntervalSec))
 	}
-	if w.MaxPages < 1 || w.MaxPages > maxPagesPerPass {
+	if w.Kind != string(avito.KindSeller) &&
+		(w.MaxPages < 1 || w.MaxPages > maxPagesPerPass) {
 		bad = append(bad, fmt.Sprintf("страниц за проход должно быть от 1 до %d",
 			maxPagesPerPass))
 	}
@@ -557,27 +584,6 @@ func watchFromForm(r *http.Request) (store.Watch, error) {
 		return w, errors.New(strings.Join(bad, "; "))
 	}
 	return w, nil
-}
-
-// checkSearchURL refuses anything this program will not fetch.
-//
-// Before a request is ever made rather than after: a watch pointed at another
-// site would spend a pass and a pacing slot to arrive at a page the extractor
-// cannot read, and report it as a collection failure.
-func checkSearchURL(raw string) error {
-	if strings.TrimSpace(raw) == "" {
-		return errors.New("не задана ссылка")
-	}
-	// Checked by the same function that will build the URL to fetch, and that
-	// is the point. This screen used to accept any *.avito.ru host while
-	// avito.ParseSearch accepts three — so a watch could save cleanly here and
-	// fail on every pass afterwards, which is the worst shape a refusal can
-	// take: no refusal at all, then silence.
-	if _, err := avito.ParseSearch(raw); err != nil {
-		return errors.New("это не похоже на ссылку поиска Авито: " +
-			"скопируйте её из адресной строки со страницы выдачи")
-	}
-	return nil
 }
 
 // addressCount is how many distinct egress addresses are configured.
@@ -630,4 +636,33 @@ func (s *Server) resumeWatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+// checkSearchURL refuses anything this program will not fetch, and names what
+// it accepted when it accepts.
+//
+// Checked by the same function that will build the URL to fetch, and that is
+// the point. This screen used to accept any *.avito.ru host while
+// avito.ParseSearch accepts three — so a watch could save cleanly here and fail
+// on every pass afterwards, which is the worst shape a refusal can take: no
+// refusal at all, then silence.
+//
+// The private-seller case is passed through word for word rather than folded
+// into the generic message. «Скопируйте ссылку из адресной строки» is useless
+// advice to somebody who did exactly that and landed on /user/… — the honest
+// answer is that this version watches shops and not people.
+func checkSearchURL(raw string) (avito.Search, error) {
+	if strings.TrimSpace(raw) == "" {
+		return avito.Search{}, errors.New("не задана ссылка")
+	}
+	parsed, err := avito.ParseSearch(raw)
+	switch {
+	case errors.Is(err, avito.ErrPrivateSeller):
+		return avito.Search{}, err
+	case err != nil:
+		return avito.Search{}, errors.New(
+			"это не похоже на ссылку поиска или магазина Авито: " +
+				"скопируйте её из адресной строки со страницы выдачи")
+	}
+	return parsed, nil
 }

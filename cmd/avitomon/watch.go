@@ -41,6 +41,20 @@ func watchCmd(args []string) error {
 	if fs.NArg() != 1 {
 		return errors.New("exactly one URL is required")
 	}
+	// The link decides the kind, and a shop decides its own surface and page
+	// count — the same rule the panel follows, applied here so the two paths
+	// cannot produce different rows for the same URL. A private profile is
+	// refused by name; anything unparseable is refused before a database is
+	// even opened.
+	parsed, err := avito.ParseSearch(fs.Arg(0))
+	if err != nil {
+		return err
+	}
+	surface, pages := avito.Surface(*surfaceFlag), 1
+	if parsed.Kind == avito.KindSeller {
+		surface = avito.SurfaceDesktop
+	}
+
 	ctx := context.Background()
 	s, err := store.Open(ctx, *dbPath)
 	if err != nil {
@@ -50,8 +64,8 @@ func watchCmd(args []string) error {
 
 	now := time.Now().Unix()
 	id, err := s.AddWatch(ctx, store.Watch{
-		Name: *name, Kind: "search", URL: fs.Arg(0),
-		Surface: avito.Surface(*surfaceFlag), MaxPages: 1,
+		Name: *name, Kind: string(parsed.Kind), URL: fs.Arg(0),
+		Surface: surface, MaxPages: pages,
 		IntervalSec: *interval, AbsenceConfirmations: 2,
 		AbsenceMinSpanSec: 1200,
 		// Due immediately. A watch somebody has just added and that does
