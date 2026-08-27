@@ -158,6 +158,11 @@ func (s *Server) Handler() http.Handler {
 	// prompt.
 	mux.Handle("GET /static/", http.FileServerFS(staticFS))
 
+	// Not behind the password. A health endpoint a supervisor cannot read is a
+	// health endpoint that does nothing, and what it discloses is the shape of
+	// this installation's trouble rather than any of its data.
+	mux.HandleFunc("GET /healthz", s.healthz)
+
 	mux.Handle("GET /", s.auth(http.HandlerFunc(s.watchesPage)))
 	mux.Handle("POST /watches", s.auth(http.HandlerFunc(s.saveWatch)))
 	mux.Handle("POST /watches/delete", s.auth(http.HandlerFunc(s.deleteWatch)))
