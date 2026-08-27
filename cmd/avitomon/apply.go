@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"strconv"
 	"time"
 
 	"github.com/BlankTrail/avito-monitor/internal/rules"
@@ -102,6 +103,22 @@ func buildEngine(s *store.Store, named map[int64]store.ListingName, w store.Watc
 					telegram.RenderLine(f.Event.Change, subjectFor(named, w, f.Event.Change)))
 			}
 			return telegram.Summarise(r.Name, lines)
+		},
+		// The inline button, on the one kind of message where a person can
+		// correct us from where they read it. The predecessor travels in the
+		// change's Was column, which is where the window producer put it.
+		Attach: func(c store.ChangeRow) string {
+			if c.Kind != track.KindListingReposted || c.Was == "" {
+				return ""
+			}
+			predecessor, err := strconv.ParseInt(c.Was, 10, 64)
+			if err != nil || predecessor <= 0 {
+				return ""
+			}
+			return telegram.Attachment{
+				ButtonText: "Это не перепубликация",
+				Callback:   telegram.NotARepost(c.ItemID, predecessor),
+			}.Encode()
 		},
 		Suppressor: rules.Suppressor{
 			Now: time.Now,

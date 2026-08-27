@@ -196,3 +196,51 @@ func sendDue(ctx context.Context, s *store.Store) error {
 	_, err = w.Run(ctx)
 	return err
 }
+
+// pollCallbacks is one turn of the inline-button poller.
+//
+// The handler does exactly what the panel's «Это не перепубликация» does — pin,
+// split, replay — because it is the same correction reached one screen earlier,
+// and two spellings of one act is how they drift apart.
+func pollCallbacks(ctx context.Context, s *store.Store, logf func(string, ...any)) error {
+	cfg, err := s.TelegramConfig(ctx)
+	if err != nil {
+		return err
+	}
+	token := cfg.BotToken
+	if v := os.Getenv(tokenEnv); v != "" {
+		token = v
+	}
+	if token == "" {
+		// Nothing configured. Not an error: the moment somebody saves a token
+		// the next turn polls, and reporting it would drive the supervisor's
+		// backoff on every fresh install.
+		return nil
+	}
+
+	p := &telegram.Poller{
+		Bot:     telegram.NewBot(token, nil),
+		Allowed: s.TelegramChats,
+		Offset:  s.CallbackOffset,
+		Save:    s.SetCallbackOffset,
+		Log:     logf,
+		Handle: func(ctx context.Context, successor, predecessor int64) (string, error) {
+			if err := s.PinPair(ctx, successor, predecessor,
+				time.Now().Unix()); err != nil {
+				return "", err
+			}
+			n, err := replayAppearance(ctx, s, successor)
+			if err != nil {
+				// The pin and the split already happened and are right. The
+				// same trade the panel makes: a correction is not rolled back
+				// because a message could not be queued.
+				return "Связь снята, но сообщение поставить в очередь не удалось.", nil
+			}
+			if n == 0 {
+				return "Связь снята. Сообщения не будет: под правила это объявление не подходит.", nil
+			}
+			return "Связь снята, история разделена, сообщение отправится заново.", nil
+		},
+	}
+	return p.Turn(ctx)
+}

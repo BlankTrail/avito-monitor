@@ -7,6 +7,8 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strconv"
+	"strings"
 
 	"github.com/BlankTrail/avito-monitor/internal/transport"
 )
@@ -194,4 +196,63 @@ func (m mtprotoSession) LoadSession(ctx context.Context) ([]byte, error) {
 
 func (m mtprotoSession) StoreSession(ctx context.Context, data []byte) error {
 	return m.s.StoreMTProtoSession(ctx, data)
+}
+
+// CallbackOffset is where the Telegram poller left off.
+//
+// Persisted rather than held in memory: Telegram re-delivers an update until
+// asking for the next one acknowledges it, so a restart would replay every
+// press since the last poll.
+func (s *Store) CallbackOffset(ctx context.Context) (int64, error) {
+	var v int64
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT telegram_update_offset FROM settings WHERE id = 1`).Scan(&v); err != nil {
+		return 0, fmt.Errorf("store: callback offset: %w", err)
+	}
+	return v, nil
+}
+
+// SetCallbackOffset moves it forward.
+//
+// Never backward: a lower offset asks Telegram to re-deliver, and this is
+// written from a loop whose whole job is to stop it doing that. max() rather
+// than a plain assignment so that two pollers on one database — which is a
+// misconfiguration, not a design — cannot walk each other back into a replay.
+func (s *Store) SetCallbackOffset(ctx context.Context, offset int64) error {
+	s.wmu.Lock()
+	defer s.wmu.Unlock()
+	if _, err := s.db.ExecContext(ctx, `
+		UPDATE settings
+		SET telegram_update_offset = max(telegram_update_offset, ?)
+		WHERE id = 1`, offset); err != nil {
+		return fmt.Errorf("store: callback offset: %w", err)
+	}
+	return nil
+}
+
+// TelegramChats is every enabled recipient's chat id.
+//
+// The whole of the callback authentication: a press is acted on only when
+// Telegram says it came from one of these. Addresses that are not numbers are
+// skipped rather than failing the lookup — a target of another kind, or a
+// username somebody typed, is simply not a chat this build can match.
+func (s *Store) TelegramChats(ctx context.Context) (map[int64]bool, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT address FROM notify_targets WHERE enabled = 1 AND kind = 'telegram'`)
+	if err != nil {
+		return nil, fmt.Errorf("store: telegram chats: %w", err)
+	}
+	defer rows.Close()
+
+	out := map[int64]bool{}
+	for rows.Next() {
+		var address string
+		if err := rows.Scan(&address); err != nil {
+			return nil, fmt.Errorf("store: telegram chats: %w", err)
+		}
+		if id, err := strconv.ParseInt(strings.TrimSpace(address), 10, 64); err == nil {
+			out[id] = true
+		}
+	}
+	return out, rows.Err()
 }

@@ -150,6 +150,17 @@ func startCollecting(ctx context.Context, s *store.Store, c *collector) {
 		Name: "подтверждение", Every: 10 * time.Minute,
 		OnPanic: onPanic, Log: logf, Run: sweeper.Turn,
 	})
+	// The sixth goroutine, and the only inbound one. The spec names five
+	// because when it was written nothing reached into this program from
+	// outside; «Это не перепубликация» on the message itself is what added a
+	// direction, and it is supervised like the rest.
+	supervise.Go(ctx, supervise.Config{
+		// Twice a minute. getUpdates long-polls for twenty-five seconds and
+		// returns the moment anything arrives, so this interval is the gap
+		// between polls and not the delay before a press is noticed.
+		Name: "нажатия", Every: 30 * time.Second, OnPanic: onPanic, Log: logf,
+		Run: func(ctx context.Context) error { return pollCallbacks(ctx, s, logf) },
+	})
 	supervise.Go(ctx, supervise.Config{
 		Name: "уборка", Every: 6 * time.Hour, OnPanic: onPanic, Log: logf,
 		Run: func(ctx context.Context) error {
