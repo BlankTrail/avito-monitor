@@ -109,6 +109,15 @@ type Server struct {
 	// must not need a licensed service.
 	CheckChannel func(ctx context.Context, id int64) (summary string, err error)
 
+	// ReplayAppearance re-queues the new-listing message that a repost link
+	// withheld, and reports how many went into the outbox.
+	//
+	// A function field for the same reason the others are: enqueueing a
+	// message means rendering one, and this package must not learn how a
+	// notification is worded. The wiring in cmd/avitomon has the engine
+	// already built.
+	ReplayAppearance func(ctx context.Context, itemID int64) (int, error)
+
 	Autostart Autostart
 
 	// botAPIFailed records that a Telegram check has failed on this run.
@@ -163,6 +172,9 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /settings/telegram", s.auth(http.HandlerFunc(s.checkTelegram)))
 
 	mux.Handle("GET /health", s.auth(http.HandlerFunc(s.healthPage)))
+
+	mux.Handle("GET /reposts", s.auth(http.HandlerFunc(s.repostsPage)))
+	mux.Handle("POST /reposts/reject", s.auth(http.HandlerFunc(s.rejectRepost)))
 
 	mux.Handle("GET /rules", s.auth(http.HandlerFunc(s.rulesPage)))
 	mux.Handle("GET /rules/edit", s.auth(http.HandlerFunc(s.ruleEditor)))
@@ -243,12 +255,13 @@ func (s *Server) ListenAddress(ctx context.Context, port int, lan bool) (string,
 
 // tabs is the header navigation.
 //
-// Six, and the increment's last one. A tab that answers 404 is a tab a person
-// clicks once and stops trusting, so each was added when its screen was.
+// Seven. A tab that answers 404 is a tab a person clicks once and stops
+// trusting, so each was added when its screen was.
 func (s *Server) tabs(path string) []Tab {
 	out := []Tab{
 		{Label: "Наблюдения", Href: "/"},
 		{Label: "Результаты", Href: "/results"},
+		{Label: "Перепубликации", Href: "/reposts"},
 		{Label: "Правила", Href: "/rules"},
 		{Label: "Здоровье сбора", Href: "/health"},
 		{Label: "История", Href: "/history"},

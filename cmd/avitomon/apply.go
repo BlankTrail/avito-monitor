@@ -9,6 +9,7 @@ import (
 	"github.com/BlankTrail/avito-monitor/internal/rules"
 	"github.com/BlankTrail/avito-monitor/internal/store"
 	"github.com/BlankTrail/avito-monitor/internal/telegram"
+	"github.com/BlankTrail/avito-monitor/internal/track"
 )
 
 // applyRules runs every rule against every change this pass produced, and
@@ -49,7 +50,25 @@ func applyRules(ctx context.Context, s *store.Store, w store.Watch, since int64)
 	e := buildEngine(s, named, w)
 	queued := 0
 	for _, c := range changes {
-		n, err := e.Apply(ctx, all, rules.Event{Change: c})
+		ev := rules.Event{Change: c}
+		// The predecessor, when this listing was linked to one. It is what
+		// makes suppress.Decide answer ReasonRepost — the field and the reason
+		// have both existed since increment 5 with nothing to set them, and
+		// this is the line that finally does.
+		//
+		// Read per change rather than joined into the query: only an
+		// appearance can be a repost, so this is one indexed lookup on the few
+		// changes of that kind rather than a column on every row.
+		if c.Kind == track.KindListingAppeared || c.Kind == track.KindListingReposted {
+			predecessor, err := s.RepostOf(ctx, c.ItemID)
+			if err != nil {
+				return queued, err
+			}
+			if predecessor != 0 {
+				ev.RepostOf = &predecessor
+			}
+		}
+		n, err := e.Apply(ctx, all, ev)
 		if err != nil {
 			return queued, err
 		}
@@ -107,4 +126,30 @@ func subjectFor(named map[int64]store.ListingName, w store.Watch, c store.Change
 	return telegram.Subject{
 		WatchName: w.Name, Title: n.Title, URLPath: n.URLPath,
 	}
+}
+
+// replayAppearance re-announces a listing whose new-listing message a repost
+// link withheld.
+//
+// The spec calls it «the suppressed alert is replayed, marked as a corrected
+// suppression». The mark is the change's own producer: 'user' says a person
+// caused this rather than a pass, which is what distinguishes it in the log
+// from an ordinary appearance arriving hours late for no stated reason.
+func replayAppearance(ctx context.Context, s *store.Store, itemID int64) (int, error) {
+	watchID, err := s.FirstWatchOf(ctx, itemID)
+	if err != nil {
+		return 0, err
+	}
+	w, err := s.Watch(ctx, watchID)
+	if err != nil {
+		return 0, err
+	}
+	now := time.Now().Unix()
+	if err := s.RecordUserChange(ctx, store.ChangeRow{
+		Kind: track.KindListingAppeared, ItemID: itemID, WatchID: watchID,
+		TS: now, HasNow: true, Confidence: 1.0, Producer: "user",
+	}); err != nil {
+		return 0, err
+	}
+	return applyRules(ctx, s, w, now)
 }

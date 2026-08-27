@@ -87,7 +87,7 @@ func (s *Store) SavePass(ctx context.Context, p Pass, listings []avito.Listing) 
 	if err != nil {
 		return SaveResult{}, err
 	}
-	res, err := savePassTx(ctx, tx, p, listings, s.Retention(), w)
+	res, err := savePassTx(ctx, tx, p, listings, s.Retention(), w, s)
 	if err != nil {
 		return SaveResult{}, err
 	}
@@ -97,7 +97,7 @@ func (s *Store) SavePass(ctx context.Context, p Pass, listings []avito.Listing) 
 	return res, nil
 }
 
-func savePassTx(ctx context.Context, tx *sql.Tx, p Pass, listings []avito.Listing, r Retention, w Watch) (SaveResult, error) {
+func savePassTx(ctx context.Context, tx *sql.Tx, p Pass, listings []avito.Listing, r Retention, w Watch, store *Store) (SaveResult, error) {
 	var out SaveResult
 
 	// The two verdicts, computed here and never taken from the caller. This
@@ -164,7 +164,7 @@ func savePassTx(ctx context.Context, tx *sql.Tx, p Pass, listings []avito.Listin
 	// half-written: a reader that saw the arrivals without the departures
 	// would draw the wrong conclusion from a snapshot that looked consistent.
 	if err := produceWindow(ctx, tx, p, passID, listings, previous,
-		out.Arrivals, adm, out.Comparable, w); err != nil {
+		out.Arrivals, adm, out.Comparable, w, store); err != nil {
 		return out, err
 	}
 	out.Previous = previous
