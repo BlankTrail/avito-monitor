@@ -22,10 +22,21 @@ func panelCmd(args []string) error {
 	fs := flag.NewFlagSet("panel", flag.ExitOnError)
 	dbPath := fs.String("db", "avito.db", "файл базы")
 	port := fs.Int("port", 8765, "порт")
+	noCollect := fs.Bool("no-collect", false,
+		"только панель, без сбора: сбор ведёт другой процесс")
+	var opts leaserOpts
+	fs.StringVar(&opts.control, "control", "", "адрес control API BlankTrail")
+	fs.StringVar(&opts.key, "key", "", "ключ BlankTrail (или "+keyEnv+")")
+	fs.StringVar(&opts.proxyFile, "proxies", "", "файл со списком прокси")
+	fs.StringVar(&opts.statePath, "state", "", "файл сессии прямого режима")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	ctx := context.Background()
+	// Cancelled when the process is asked to stop, which is what ends every
+	// supervised loop. There is no other stop, deliberately: a second way to
+	// end one is a second way for one to end silently.
+	ctx, stop := context.WithCancel(context.Background())
+	defer stop()
 
 	s, err := store.Open(ctx, *dbPath)
 	if err != nil {
@@ -61,9 +72,34 @@ func panelCmd(args []string) error {
 	if panel.PasswordHash == "" && strings.HasPrefix(addr, "127.0.0.1") {
 		fmt.Println("Пароля нет — панель открыта только с этой машины.")
 	}
-	if _, err := s.TransportMode(ctx); errors.Is(err, store.ErrNoTransportChosen) {
+	// Collection starts here, in the same process. That is the whole point of
+	// this increment: until now a pass happened because somebody typed
+	// «avitomon run --once», and six measurement documents in a row recorded
+	// that as the one place «the whole product from a browser» was not true.
+	//
+	// Decision 3 first. No transport chosen means no collection, and saying so
+	// on the terminal beats a scheduler looping on an error nobody reads.
+	switch _, err := s.TransportMode(ctx); {
+	case errors.Is(err, store.ErrNoTransportChosen):
 		fmt.Println("Способ выхода в сеть ещё не выбран — сбор не идёт. " +
 			"Откройте панель и ответьте на первый вопрос.")
+	case err != nil:
+		return err
+	case *noCollect:
+		fmt.Println("Сбор в этом процессе не ведётся: запущено с -no-collect.")
+	default:
+		c, err := openCollector(ctx, s, opts)
+		if err != nil {
+			// Not fatal. The panel is how somebody fixes a transport that will
+			// not open — refusing to show it would leave them with a broken
+			// install and no screen to repair it on.
+			fmt.Println("Сбор не запустился:", err)
+			fmt.Println("Панель работает — поправьте настройки и перезапустите.")
+		} else {
+			defer func() { _ = c.Close() }()
+			startCollecting(ctx, s, c)
+			fmt.Println("Сбор идёт в этом же процессе.")
+		}
 	}
 
 	hs := &http.Server{

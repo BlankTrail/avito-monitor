@@ -54,6 +54,58 @@ func (s *Server) watchesPage(w http.ResponseWriter, r *http.Request) {
 		MaxPages: 1, IntervalSec: 300})
 }
 
+// collectionState answers «идёт ли сбор» on the screen where the watches are.
+//
+// Not in Настройки. A monitor that silently stopped collecting is the failure
+// this whole product is arranged against, and burying the answer two screens
+// away is how somebody spends a week believing they are being watched over.
+//
+// Answered from the data rather than from a flag, because a flag says what was
+// intended and this has to say what happened. The newest pass is the evidence:
+// if none has been written in several times the shortest interval, nothing is
+// collecting whatever any setting claims.
+func (s *Server) collectionState(ctx context.Context, watches []store.Watch) string {
+	enabled := 0
+	shortest := 0
+	for _, w := range watches {
+		if !w.Enabled || w.State == "halted" {
+			continue
+		}
+		enabled++
+		if shortest == 0 || w.IntervalSec < shortest {
+			shortest = w.IntervalSec
+		}
+	}
+	if enabled == 0 {
+		return ""
+	}
+
+	last, err := s.Store.LastPassAt(ctx)
+	if err != nil {
+		return ""
+	}
+	if last == 0 {
+		return `<div class="card">` + note("warning",
+			"Ни одного прохода ещё не было. Если панель запущена командой "+
+				"«avitomon panel», сбор идёт в этом же процессе и первый "+
+				"проход будет в течение минуты.") + `</div>`
+	}
+
+	age := s.now().Unix() - last
+	// Three intervals, the same slack the lifecycle uses to call a pass a
+	// re-seed. Two would cry wolf on one slow pass; ten would let a day of
+	// silence look normal.
+	if age > int64(3*shortest) {
+		return `<div class="card">` + note("bad", fmt.Sprintf(
+			"Сбор не идёт: последний проход был %s назад, а самое частое "+
+				"наблюдение опрашивается раз в %d с. Проверьте, запущен ли "+
+				"«avitomon panel» без -no-collect, и не остановлены ли "+
+				"наблюдения.", ago(last, s.now().Unix()), shortest)) + `</div>`
+	}
+	return `<div class="card">` + note("neutral", fmt.Sprintf(
+		"Сбор идёт: последний проход %s назад.", ago(last, s.now().Unix()))) + `</div>`
+}
+
 // surfaceAdvice is which surface this installation can actually use.
 //
 // Measured on live Avito, 25 August 2026, from one machine within minutes:
@@ -117,6 +169,7 @@ func (s *Server) renderWatches(w http.ResponseWriter, r *http.Request, problem s
 	if len(watches) > 0 {
 		body.WriteString(s.watchTable(ctx, watches))
 	}
+	body.WriteString(s.collectionState(ctx, watches))
 
 	if problem != "" {
 		body.WriteString(`<div class="card">` + note("bad", problem) + `</div>`)

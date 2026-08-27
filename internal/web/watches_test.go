@@ -324,3 +324,57 @@ func TestARejectedFormComesBackWithTheSurfaceThePersonChose(t *testing.T) {
 		t.Errorf("the chosen surface was lost to the refusal: %s", sel)
 	}
 }
+
+// TestTheWatchesScreenSaysWhetherCollectionIsRunning.
+//
+// On the screen where the watches are, not in Настройки. A monitor that
+// silently stopped collecting is the failure this whole product is arranged
+// against, and burying the answer two screens away is how somebody spends a
+// week believing they are being watched over.
+func TestTheWatchesScreenSaysWhetherCollectionIsRunning(t *testing.T) {
+	s := newServer(t)
+	id := aWatch(t, s, "наблюдение")
+
+	// No pass at all: said plainly rather than left blank.
+	body := get(t, s, "/").Body.String()
+	if !strings.Contains(body, "Ни одного прохода ещё не было") {
+		t.Errorf("a fresh install says nothing about collection: %s", body)
+	}
+
+	// A recent pass: collection is running.
+	aPass(t, s, id, s.now().Unix()-30, "ok", "dom", true, 30)
+	if body = get(t, s, "/").Body.String(); !strings.Contains(body, "Сбор идёт") {
+		t.Errorf("a recent pass does not read as collecting: %s", body)
+	}
+}
+
+// TestALongSilenceReadsAsStoppedAndNotAsQuiet.
+//
+// Three intervals, the same slack the lifecycle uses to call a pass a re-seed.
+// Two would cry wolf on one slow pass; ten would let a day of silence look
+// normal.
+func TestALongSilenceReadsAsStoppedAndNotAsQuiet(t *testing.T) {
+	s := newServer(t)
+	id := aWatch(t, s, "наблюдение")
+	// The watch's interval is 300 s, so an hour is well past three of them.
+	aPass(t, s, id, s.now().Unix()-3600, "ok", "dom", true, 30)
+
+	body := get(t, s, "/").Body.String()
+	if !strings.Contains(body, "Сбор не идёт") {
+		t.Errorf("an hour of silence reads as collecting: %s", body)
+	}
+	if !strings.Contains(body, "no-collect") {
+		t.Error("the screen does not say what to check")
+	}
+}
+
+// TestAnInstallationWithNoWatchesIsToldNothingAboutCollection.
+//
+// There is nothing to collect, so «сбор не идёт» would be a warning about a
+// state the person deliberately put the product in.
+func TestAnInstallationWithNoWatchesIsToldNothingAboutCollection(t *testing.T) {
+	body := get(t, newServer(t), "/").Body.String()
+	if strings.Contains(body, "Сбор не идёт") {
+		t.Error("an installation with no watches was warned about collection")
+	}
+}
