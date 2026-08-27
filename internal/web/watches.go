@@ -249,6 +249,29 @@ func (s *Server) renderWatches(w http.ResponseWriter, r *http.Request, problem s
 			"Один адрес — один потолок, сколько бы соединений ни было открыто. "+
 				"Список прокси на вкладке «Прокси» умножает его."))
 	}
+	// The ceiling is the site's wall, not this mode's throughput, and in the
+	// free mode the two are far apart. The soak run of 23–24 августа spent
+	// sixty-nine of ninety-three minutes waiting out ten refusals — a 74% time
+	// tax — and landed at about 250–260 clean requests an hour against the
+	// ceiling's 360.
+	//
+	// Said here rather than left to the pace warning below, which is honest but
+	// late: it needs ten passes before it can say anything, and by then the
+	// schedule is set and the watches are already running behind. A person
+	// filling the budget to its ceiling in direct mode is making a plan the
+	// free route cannot keep.
+	//
+	// The sample size and the single-address caveat travel with the number,
+	// because the spec forbids quoting one without them.
+	if mode == transport.ModeDirect {
+		body.WriteString(note("warning",
+			"Это потолок площадки, а не то, что выдаёт прямой режим. "+
+				"В замере 23–24 августа он потратил 69 минут из 93 на "+
+				"пережидание отказов и выдал около 250–260 чистых запросов "+
+				"в час против потолка в 360 — один адрес, один прогон. "+
+				"Планируя расписание под самый потолок, вы планируете то, "+
+				"чего свободный путь не выдержит."))
+	}
 	body.WriteString(`</div>`)
 
 	if len(watches) > 0 {

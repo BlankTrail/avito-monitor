@@ -58,7 +58,13 @@ var catalogue = []Field{
 	{Key: "price_kind", Name: "Что с ценой", Group: "Цена", Type: TypeText},
 	{Key: "discount_pct", Name: "Скидка, %", Group: "Цена", Type: TypeInt},
 
-	{Key: "seller_id", Name: "Продавец", Group: "Продавец", Type: TypeInt},
+	// The name first, because it is the one a person reads. «Продавец: 1» was
+	// what this group used to export on its own — a row number that means
+	// nothing to anybody opening the file, and something different on every
+	// install.
+	{Key: "seller_name", Name: "Продавец", Group: "Продавец", Type: TypeText},
+	{Key: "seller_key", Name: "Продавец, ключ", Group: "Продавец", Type: TypeText},
+	{Key: "seller_id", Name: "Продавец, номер у нас", Group: "Продавец", Type: TypeInt},
 
 	{Key: "watch", Name: "Наблюдение", Group: "Наблюдение", Type: TypeText},
 	{Key: "position", Name: "Позиция в выдаче", Group: "Наблюдение", Type: TypeInt},

@@ -119,3 +119,25 @@ func TestADisabledWatchIsNotCountedEitherWay(t *testing.T) {
 		t.Errorf("= %d (%s)", rec.Code, rec.Body.String())
 	}
 }
+
+// TestOneHaltedWatchGetsAGrammaticalSentence.
+//
+// «все 1 наблюдение остановлены» agrees with nothing, and one watch is what a
+// fresh install has — so the ungrammatical branch was the one almost everybody
+// would read. Found by halting a watch and reading the endpoint.
+func TestOneHaltedWatchGetsAGrammaticalSentence(t *testing.T) {
+	s := newServer(t)
+	ctx := context.Background()
+	id := aWatch(t, s, "магазин")
+	if err := s.Store.MarkHalted(ctx, id, "ip-blocked", 1500); err != nil {
+		t.Fatal(err)
+	}
+
+	body := get(t, s, "/healthz").Body.String()
+	if strings.Contains(body, "все 1") {
+		t.Errorf("несогласованная фраза:\n%s", body)
+	}
+	if !strings.Contains(body, "единственное наблюдение остановлено") {
+		t.Errorf("одно наблюдение названо не так:\n%s", body)
+	}
+}

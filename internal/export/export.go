@@ -91,8 +91,16 @@ type Row struct {
 	Currency    string
 	DiscountPct *int64
 
-	SellerID int64
-	Position int
+	// SellerID is this database's own row number and SellerKey is Avito's.
+	// Both are carried because they answer different questions: the id groups
+	// rows inside one file, the key is the only one of the two that still means
+	// anything outside it — the same shop is row 1 here and row 7 on another
+	// install. SellerName is «» wherever the surface never stated one, which is
+	// most of the mobile surface and about twenty rows in fifty on desktop.
+	SellerID   int64
+	SellerKey  string
+	SellerName string
+	Position   int
 
 	FirstSeenAt int64
 	LastSeenAt  int64
@@ -185,6 +193,10 @@ func valueOf(r Row, f Field) (Value, bool) {
 		return Value{Text: priceKindLabel(r.PriceKind)}, true
 	case "discount_pct":
 		return optInt(r.DiscountPct), true
+	case "seller_key":
+		return Value{Text: r.SellerKey}, true
+	case "seller_name":
+		return Value{Text: r.SellerName}, true
 	case "seller_id":
 		if r.SellerID == 0 {
 			return Value{Absent: true}, true

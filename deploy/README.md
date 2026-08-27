@@ -24,9 +24,36 @@ sudo systemctl enable --now avitomon
 
 ## launchd
 
+`launchd` ничего не создаёт сам, а плист рассчитывает на служебного
+пользователя `_avitomon` и на каталоги, которых на чистой машине нет. Раздел
+systemd выше заводит своего пользователя через `useradd --create-home`; здесь
+то же самое делается руками.
+
 ```bash
+NEWUID=$(( $(dscl . -list /Users UniqueID | awk '$2 < 500 {print $2}' | sort -n | tail -1) + 1 ))
+sudo dscl . -create /Groups/_avitomon PrimaryGroupID "$NEWUID"
+sudo dscl . -create /Users/_avitomon UserShell /usr/bin/false
+sudo dscl . -create /Users/_avitomon UniqueID "$NEWUID"
+sudo dscl . -create /Users/_avitomon PrimaryGroupID "$NEWUID"
+```
+
+Идентификатор берётся на единицу больше самого большого служебного — это те,
+что ниже 500. Взять первый попавшийся нельзя: занятый номер отдаст демон
+чужому пользователю.
+
+```bash
+sudo mkdir -p /usr/local/var/avitomon /usr/local/var/log
+sudo touch /usr/local/var/log/avitomon.log
+sudo chown -R _avitomon:_avitomon /usr/local/var/avitomon /usr/local/var/log/avitomon.log
+sudo install -m755 avitomon /usr/local/bin/
 sudo install -m644 com.blanktrail.avitomon.plist /Library/LaunchDaemons/
 sudo launchctl load -w /Library/LaunchDaemons/com.blanktrail.avitomon.plist
+```
+
+Проверить, что поднялся:
+
+```bash
+sudo launchctl print system/com.blanktrail.avitomon | head -20
 ```
 
 ## Панель

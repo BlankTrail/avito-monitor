@@ -15,12 +15,24 @@ import (
 func isAbs(p string) bool                           { return filepath.IsAbs(p) }
 func filepathEvalSymlinks(p string) (string, error) { return filepath.EvalSymlinks(p) }
 
-// runKey is where Windows looks for what to start at login.
+// runKey is where Windows looks for what to start at login, and entryName is
+// what our value is called under it.
 //
 // HKCU, not HKLM: a monitor is one person's tool watching one person's
 // listings, and the machine-wide key would need administrator rights to solve
 // a problem nobody has.
-const runKey = `Software\Microsoft\Windows\CurrentVersion\Run`
+//
+// Variables rather than constants so a test can round-trip these three
+// functions against the real registry — CreateKey, SetStringValue, DeleteValue
+// and GetStringValue as they are actually called — while pointing at a key of
+// its own. Nothing about this test may be able to leave a value behind under
+// Run: a stray entry there names an executable that no longer exists and tries
+// to start it at every login, for ever, on the machine of whoever ran the
+// tests.
+var (
+	runKey    = `Software\Microsoft\Windows\CurrentVersion\Run`
+	entryName = Name
+)
 
 // Enable writes the entry.
 func Enable(c Command) error {
@@ -33,7 +45,7 @@ func Enable(c Command) error {
 	}
 	defer func() { _ = k.Close() }()
 
-	if err := k.SetStringValue(Name, commandLine(c)); err != nil {
+	if err := k.SetStringValue(entryName, commandLine(c)); err != nil {
 		return fmt.Errorf("autostart: writing the Run entry: %w", err)
 	}
 	return nil
@@ -52,7 +64,7 @@ func Disable() error {
 
 	// A missing value is not an error: "make sure this is off" is the request,
 	// and it is already off.
-	if err := k.DeleteValue(Name); err != nil && err != registry.ErrNotExist {
+	if err := k.DeleteValue(entryName); err != nil && err != registry.ErrNotExist {
 		return fmt.Errorf("autostart: removing the Run entry: %w", err)
 	}
 	return nil
@@ -69,7 +81,7 @@ func Enabled() (bool, error) {
 	}
 	defer func() { _ = k.Close() }()
 
-	if _, _, err := k.GetStringValue(Name); err != nil {
+	if _, _, err := k.GetStringValue(entryName); err != nil {
 		if err == registry.ErrNotExist {
 			return false, nil
 		}
