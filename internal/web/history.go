@@ -102,7 +102,7 @@ func (s *Server) historyPage(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		offered += len(threads)
-		b.WriteString(threadList(watch, threads))
+		b.WriteString(threadList(watch, threads, s.now().Unix()))
 	}
 	if offered == 0 && threadID == 0 {
 		b.WriteString(`<div class="card">` + note("neutral",
@@ -162,17 +162,27 @@ func chartCard(series store.ThreadSeries) string {
 	return b.String()
 }
 
-func threadList(watch store.Watch, threads []store.ThreadSeries) string {
+func threadList(watch store.Watch, threads []store.ThreadSeries, now int64) string {
 	var b strings.Builder
 	b.WriteString(`<div class="card">`)
 	fmt.Fprintf(&b, `<h2>%s</h2><table>`, esc(watch.Name))
+	b.WriteString(`<thead><tr><th>Объявление</th><th class="num">Цена</th>` +
+		`<th class="num">Видели</th></tr></thead>`)
 	for _, t := range threads {
 		title := t.Title
 		if title == "" {
 			title = "объявление " + strconv.FormatInt(t.ThreadID, 10)
 		}
-		fmt.Fprintf(&b, `<tr><td><a href="/history?thread=%d">%s</a></td></tr>`,
-			t.ThreadID, esc(title))
+		// Price and date, because the title alone does not identify anything.
+		// A shop's page one is a dozen of the same model at four prices, and a
+		// column of identical strings is a column a person cannot use.
+		price := "—"
+		if t.LastPriceMinor != nil {
+			price = rubles(*t.LastPriceMinor)
+		}
+		fmt.Fprintf(&b, `<tr><td><a href="/history?thread=%d">%s</a></td>`+
+			`<td class="num">%s</td><td class="num">%s</td></tr>`,
+			t.ThreadID, esc(title), esc(price), esc(ago(t.LastSeenAt, now)))
 	}
 	b.WriteString(`</table></div>`)
 	return b.String()

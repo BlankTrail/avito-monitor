@@ -75,6 +75,36 @@ func passFacts(p Pass, w Watch, prev prevPass) lifecycle.PassFacts {
 	}
 }
 
+// markSeeded writes down that the watch now has a baseline.
+//
+// seeded_at was read in two places and written in none: the panel said «ещё не
+// засеяно» about every watch for the life of the install, however many passes
+// it had made, and the planner's «page two only while seeded_at IS NULL» — one
+// of the three independent refusals of deep pagination — was stuck open for
+// ever in the direction that spends requests.
+//
+// Set from the seeding pass itself, because that pass IS the baseline: after it
+// there is something for «новое» to be a difference from. coalesce rather than
+// an overwrite, so a watch whose history was pruned back to nothing does not
+// silently restart its seeding — SavePass would then derive is_seed = true a
+// second time, and the date this watch first had a baseline is not a thing that
+// happens twice.
+//
+// Above the count guard on purpose. A seeding pass that carried no total_count
+// is still a seeding pass, and the earlier placement would have left exactly
+// those watches unseeded for ever — the rarest case and the hardest to notice.
+func markSeeded(ctx context.Context, tx *sql.Tx, p Pass) error {
+	if !p.IsSeed {
+		return nil
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE watches SET seeded_at = coalesce(seeded_at, ?), updated_at = ?
+		WHERE id = ?`, p.StartedAt, p.StartedAt, p.WatchID); err != nil {
+		return fmt.Errorf("store: seeded: %w", err)
+	}
+	return nil
+}
+
 // updateBaseline moves what the collapse test compares against.
 //
 // Only an evidential pass may move it. Letting a blocked one write the baseline
