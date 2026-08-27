@@ -385,3 +385,69 @@ func TestAnInstallationWithNoWatchesIsToldNothingAboutCollection(t *testing.T) {
 		t.Error("an installation with no watches was warned about collection")
 	}
 }
+
+// TestAWatchThatCannotKeepItsIntervalIsNamed.
+//
+// Measured: a desktop pass through BlankTrail took 7m41s against a 300-second
+// interval. The scheduler does not know — it takes what is due and reads in
+// order — and the budget line cannot tell, because that arithmetic counts
+// requests and not seconds. Such a watch is simply read less often than its own
+// row claims, and until this line nothing anywhere said so.
+func TestAWatchThatCannotKeepItsIntervalIsNamed(t *testing.T) {
+	s := newServer(t)
+	id := aWatch(t, s, "медленное")
+	// The watch's interval is 300 s. Five passes of seven minutes each.
+	for i := 0; i < 5; i++ {
+		slowPass(t, s, id, s.now().Unix()-int64(600*i), 7*60)
+	}
+
+	body := get(t, s, "/").Body.String()
+	if !strings.Contains(body, "не успевает за своим интервалом") {
+		t.Errorf("a watch that cannot keep up is not named: %s", body)
+	}
+	if !strings.Contains(body, "420") {
+		t.Error("the measured duration is not on the screen")
+	}
+	if !strings.Contains(body, "300") {
+		t.Error("the interval it is being compared against is not on the screen")
+	}
+}
+
+// TestAWatchThatKeepsUpIsSaidNothingAbout.
+func TestAWatchThatKeepsUpIsSaidNothingAbout(t *testing.T) {
+	s := newServer(t)
+	id := aWatch(t, s, "быстрое")
+	for i := 0; i < 5; i++ {
+		slowPass(t, s, id, s.now().Unix()-int64(600*i), 3)
+	}
+	if strings.Contains(get(t, s, "/").Body.String(), "не успевает") {
+		t.Error("a watch that keeps up was warned about")
+	}
+}
+
+// TestOneSlowPassIsNotAPattern.
+//
+// Below five readings the median is one slow start being mistaken for a habit —
+// and the first pass of any watch is its seeding pass, which is the slowest it
+// will ever be.
+func TestOneSlowPassIsNotAPattern(t *testing.T) {
+	s := newServer(t)
+	id := aWatch(t, s, "новое")
+	slowPass(t, s, id, s.now().Unix(), 7*60)
+
+	if strings.Contains(get(t, s, "/").Body.String(), "не успевает") {
+		t.Error("one slow pass produced a verdict")
+	}
+}
+
+// slowPass writes one successful pass that took a given number of seconds.
+func slowPass(t *testing.T, s *Server, watchID, at int64, seconds int64) {
+	t.Helper()
+	if _, err := s.Store.DB().Exec(`
+		INSERT INTO passes (watch_id, started_at, finished_at, page, surface,
+		                    class, path, mode, evidential, items_seen, elapsed_ms)
+		VALUES (?, ?, ?, 1, 'mobile', 'ok', 'dom', 'direct', 1, 30, ?)`,
+		watchID, at, at+seconds, seconds*1000); err != nil {
+		t.Fatal(err)
+	}
+}
