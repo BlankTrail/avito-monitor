@@ -36,6 +36,15 @@ type ThreadSeries struct {
 	URLPath  string
 	ItemIDs  []int64
 	Points   []PricePoint
+
+	// LastPriceMinor and LastSeenAt are filled by ThreadsWithHistory and left
+	// zero by ThreadSeries, which has the whole series and needs no summary of
+	// it. They exist because the index was a column of bare titles: twelve
+	// phones from one shop rendered as «iPhone 14 Pro Max, 256 ГБ, SIM + eSIM»
+	// three times over with nothing to tell them apart. Found by opening the
+	// page.
+	LastPriceMinor *int64
+	LastSeenAt     int64
 }
 
 // ThreadSeries reads one thread's price history, oldest point first.
@@ -109,7 +118,17 @@ func (s *Store) ThreadsWithHistory(ctx context.Context, watchID int64, limit int
 		       (SELECT h.title FROM listings h WHERE h.thread_id = l.thread_id
 		        ORDER BY h.first_seen_at DESC, h.item_id DESC LIMIT 1),
 		       (SELECT h.url_path FROM listings h WHERE h.thread_id = l.thread_id
-		        ORDER BY h.first_seen_at DESC, h.item_id DESC LIMIT 1)
+		        ORDER BY h.first_seen_at DESC, h.item_id DESC LIMIT 1),
+		       max(s.ts),
+		       -- The price AT that latest snapshot, and nothing else. max()
+		       -- over price_minor would answer «the highest price this thread
+		       -- ever carried», which on a listing that has come down reads as
+		       -- a lie in the column a person is scanning for a bargain.
+		       (SELECT CASE WHEN p.price_kind = 'exact' THEN p.price_minor END
+		        FROM listing_snapshots p
+		        JOIN listings pl ON pl.item_id = p.item_id
+		        WHERE pl.thread_id = l.thread_id
+		        ORDER BY p.ts DESC LIMIT 1)
 		FROM watch_members m
 		JOIN listings l ON l.item_id = m.item_id
 		JOIN listing_snapshots s ON s.item_id = l.item_id
@@ -125,7 +144,8 @@ func (s *Store) ThreadsWithHistory(ctx context.Context, watchID int64, limit int
 	var out []ThreadSeries
 	for rows.Next() {
 		var t ThreadSeries
-		if err := rows.Scan(&t.ThreadID, &t.Title, &t.URLPath); err != nil {
+		if err := rows.Scan(&t.ThreadID, &t.Title, &t.URLPath,
+			&t.LastSeenAt, &t.LastPriceMinor); err != nil {
 			return nil, fmt.Errorf("store: threads with history: %w", err)
 		}
 		out = append(out, t)

@@ -120,7 +120,21 @@ func (f ExportFilter) where() (string, []any) {
 	return " WHERE " + strings.Join(clauses, " AND "), args
 }
 
-// ExportRows streams what the filter selects, oldest listing first.
+// ExportRows streams what the filter selects, in the order the site showed it.
+//
+// Ordered by position and not by item id. The screen carries a «Позиция»
+// column, and a table sorted by an invisible key reads as sorted by nothing —
+// looking at the rendered page is what found it: positions came out 1, 9, 12,
+// 8, 7, 2 down a twelve-row list. Item id is neither position nor age; it was
+// documented here as «oldest listing first», which it never guaranteed.
+//
+// Present rows first, because a listing still in the result set has a position
+// that means something and one that has gone does not. Those fall to the end
+// in last-seen order, newest first: for something that vanished, when it was
+// last seen is the only ordering a person is asking about.
+//
+// Ties broken by item id so the order is total. An export whose row order
+// shifts between two runs of the same filter is an export nobody can diff.
 //
 // A sequence rather than a slice: the caller writes each row and forgets it,
 // and building a slice would hold a hundred thousand listings in memory on a
@@ -132,7 +146,9 @@ func (s *Store) ExportRows(ctx context.Context, f ExportFilter) iter.Seq2[export
 	return func(yield func(export.Row, error) bool) {
 		clause, args := f.where()
 		rows, err := s.db.QueryContext(ctx,
-			exportSelect+clause+" ORDER BY m.watch_id, l.item_id", args...)
+			exportSelect+clause+" ORDER BY m.watch_id, m.present DESC, "+
+				"CASE WHEN m.present THEN m.last_position END, "+
+				"m.last_seen_at DESC, l.item_id", args...)
 		if err != nil {
 			yield(export.Row{}, fmt.Errorf("store: export: %w", err))
 			return

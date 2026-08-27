@@ -238,3 +238,69 @@ func TestAListingWithNoSnapshotAtAllStillExports(t *testing.T) {
 			got[0].SnapshotAt)
 	}
 }
+
+// TestResultsComeOutInTheOrderTheSiteShowedThem.
+//
+// Found by looking at the rendered screen rather than by reading code: the
+// table carries a «Позиция» column and the rows came out 1, 9, 12, 8, 7, 2 down
+// a twelve-row list, because the order was item id and item id is neither
+// position nor age.
+func TestResultsComeOutInTheOrderTheSiteShowedThem(t *testing.T) {
+	s := openTemp(t)
+	ctx := context.Background()
+	wid, err := s.AddWatch(ctx, aWatch())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Deliberately descending ids against ascending positions, so an order by
+	// id and an order by position cannot agree by accident.
+	if _, err := s.SavePass(ctx, aPass(wid, 1000), listingsFor(900, 800, 700)); err != nil {
+		t.Fatal(err)
+	}
+
+	var positions []int
+	for row, err := range s.ExportRows(ctx, ExportFilter{}) {
+		if err != nil {
+			t.Fatal(err)
+		}
+		positions = append(positions, row.Position)
+	}
+	if len(positions) != 3 {
+		t.Fatalf("строк = %d", len(positions))
+	}
+	for i, got := range positions {
+		if got != i+1 {
+			t.Fatalf("позиции = %v, ожидалось 1 2 3", positions)
+		}
+	}
+}
+
+// TestWhatHasGoneSinksToTheBottom. A listing still in the result set has a
+// position that means something; one that has gone does not, and mixing the two
+// by position would sort the departed among the living by a stale number.
+func TestWhatHasGoneSinksToTheBottom(t *testing.T) {
+	s := openTemp(t)
+	ctx := context.Background()
+	wid, err := s.AddWatch(ctx, aWatch())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.SavePass(ctx, aPass(wid, 1000), listingsFor(900, 800, 700)); err != nil {
+		t.Fatal(err)
+	}
+	// 900 held position one and is now gone.
+	if _, err := s.SavePass(ctx, aPass(wid, 2000), listingsFor(800, 700)); err != nil {
+		t.Fatal(err)
+	}
+
+	var ids []int64
+	for row, err := range s.ExportRows(ctx, ExportFilter{}) {
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, row.ItemID)
+	}
+	if len(ids) != 3 || ids[len(ids)-1] != 900 {
+		t.Fatalf("порядок = %v, ушедшее должно быть последним", ids)
+	}
+}

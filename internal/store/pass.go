@@ -156,6 +156,9 @@ func savePassTx(ctx context.Context, tx *sql.Tx, p Pass, listings []avito.Listin
 	if err := updateMembers(ctx, tx, p, listings); err != nil {
 		return out, err
 	}
+	if err := markSeeded(ctx, tx, p); err != nil {
+		return out, err
+	}
 	if err := updateBaseline(ctx, tx, p, p.Evidential); err != nil {
 		return out, err
 	}

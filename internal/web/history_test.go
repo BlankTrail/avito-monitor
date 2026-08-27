@@ -256,3 +256,32 @@ func TestAThreadWithNoPriceAtAllSaysThatInstead(t *testing.T) {
 		t.Errorf("body = %q", body)
 	}
 }
+
+// TestTheHistoryIndexTellsItsRowsApart.
+//
+// Found by opening the page: a live shop's twelve listings rendered as a column
+// of bare titles, three of them reading «iPhone 14 Pro Max, 256 ГБ, SIM + eSIM»
+// with nothing to distinguish them. A list a person cannot read is a list that
+// is not there.
+func TestTheHistoryIndexTellsItsRowsApart(t *testing.T) {
+	s := newServer(t)
+	wid := aWatch(t, s, "наблюдение")
+	// Two listings whose titles are the same string, which is what a shop's
+	// page one actually looks like, at two prices.
+	aListing(t, s, 100, 100, "iPhone 14 Pro Max, 256 ГБ", 1_700_000_000)
+	aSnapshot(t, s, 100, 1_700_000_000, "exact", 5_099_000)
+	aMember(t, s, wid, 100)
+	aListing(t, s, 101, 101, "iPhone 14 Pro Max, 256 ГБ", 1_700_000_000)
+	aSnapshot(t, s, 101, 1_700_000_000, "exact", 4_799_000)
+	aMember(t, s, wid, 101)
+
+	body := get(t, s, "/history").Body.String()
+	for _, want := range []string{"Цена", "Видели"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("в списке нет колонки %q", want)
+		}
+	}
+	if !strings.Contains(body, "₽") {
+		t.Error("в списке нет ни одной цены")
+	}
+}
