@@ -159,6 +159,18 @@ func (s *Store) RepostOf(ctx context.Context, itemID int64) (int64, error) {
 // the site simply showed us the listing again, and a future pair really might
 // be a repost.
 func retractLinksFrom(ctx context.Context, tx *sql.Tx, p Pass, passID, itemID int64) error {
+	return retractLinksFromTx(ctx, tx, p.WatchID, itemID, p.StartedAt, &passID)
+}
+
+// retractLinksFromTx is the same act without a pass behind it.
+//
+// The confirmation sweeper reaches the same conclusion from an item page rather
+// than from a window, and an item page is not a pass — so passID is a pointer
+// and nil there. The evidence column stays honest either way: the pass version
+// points at the pass it read, and the sweeper's points at nothing, because
+// there is nothing in `passes` to point at.
+func retractLinksFromTx(ctx context.Context, tx *sql.Tx,
+	watchID, itemID, at int64, passID *int64) error {
 	rows, err := tx.QueryContext(ctx, `
 		SELECT successor_id FROM repost_links
 		WHERE predecessor_id = ? AND state = 'linked'`, itemID)
@@ -186,7 +198,7 @@ func retractLinksFrom(ctx context.Context, tx *sql.Tx, p Pass, passID, itemID in
 		UPDATE repost_links
 		SET state = 'retracted', decided_by = 'reappeared', decided_at = ?
 		WHERE predecessor_id = ? AND state = 'linked'`,
-		p.StartedAt, itemID); err != nil {
+		at, itemID); err != nil {
 		return fmt.Errorf("store: retract %d: %w", itemID, err)
 	}
 
@@ -199,7 +211,7 @@ func retractLinksFrom(ctx context.Context, tx *sql.Tx, p Pass, passID, itemID in
 		// a message that is now false.
 		if err := insertChange(ctx, tx, ChangeRow{
 			Kind: track.KindRepostRetracted, ItemID: successor,
-			WatchID: p.WatchID, PassID: &passID, TS: p.StartedAt,
+			WatchID: watchID, PassID: passID, TS: at,
 			Field: "predecessor", Was: fmt.Sprint(itemID),
 			HadBefore: true, Confidence: 1.0, Producer: "window",
 		}); err != nil {
