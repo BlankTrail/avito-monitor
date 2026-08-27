@@ -602,3 +602,38 @@ func TestTheHaltBannerCarriesMarkerUrlAndWhen(t *testing.T) {
 		t.Error("the banner does not say how long it has been stopped")
 	}
 }
+
+// TestTheScreenAndTheCollectorAgreeOnWhatAUrlIs.
+//
+// This screen accepted any *.avito.ru host while avito.ParseSearch accepts
+// three, so a watch could save cleanly and then fail on every pass — no refusal
+// at first, then silence, which is the worst shape a refusal can take.
+func TestTheScreenAndTheCollectorAgreeOnWhatAUrlIs(t *testing.T) {
+	s := newServer(t)
+	for _, bad := range []string{
+		"https://avito.ru.example.com/all?q=x",
+		"https://jobs.avito.ru/all?q=x",
+		"https://example.com/all?q=x",
+		"не ссылка",
+	} {
+		form := addWatchForm("наблюдение", bad, 300)
+		rec := post(t, s, "/watches", form)
+		if rec.Code != http.StatusOK {
+			t.Errorf("%q was accepted (= %d)", bad, rec.Code)
+			continue
+		}
+		if !strings.Contains(rec.Body.String(), "ссылк") {
+			t.Errorf("%q: the refusal does not name the mistake", bad)
+		}
+	}
+	// And what the collector accepts, the screen accepts.
+	for _, good := range []string{
+		"https://m.avito.ru/moskva/telefony?q=x",
+		"https://www.avito.ru/moskva/telefony?q=x",
+		"https://avito.ru/all?q=x",
+	} {
+		if err := checkSearchURL(good); err != nil {
+			t.Errorf("%q was refused: %v", good, err)
+		}
+	}
+}

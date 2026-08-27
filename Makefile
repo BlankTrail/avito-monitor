@@ -25,10 +25,15 @@ build:
 # same reason: an extractor that could ask the time would have a golden fixture
 # whose output changed at midnight.
 #
-# It greps imports rather than parsing them, which is enough because the
-# forbidden list is short and exact, and because a build tag or a dot-import
-# clever enough to defeat this would be far more visible in review than the
-# import it was hiding.
+# The real enforcement is two tests in the package itself, because those run for
+# anybody who types `go test ./...` — which is everybody, and which is the
+# difference between a rule and a wish. TestPackageReachesNoNetwork walks
+# `go list -deps` and is transitive; TestTheDomainImportsNothingItMustNot parses
+# direct imports and catches the clock, which arrives transitively through
+# encoding/json and cannot be banned by the first.
+#
+# This target exists because the spec names this spelling, and it greps, which
+# is a third and weakest net.
 check-no-net:
 	@echo "checking avito/ imports"
 	@! grep -REn '^\s*(_ )?"(net|net/http|net/url|database/sql|time|os|os/exec)"' \

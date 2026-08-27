@@ -15,6 +15,8 @@ import (
 	"github.com/BlankTrail/avito-monitor/internal/transport"
 	"github.com/BlankTrail/avito-monitor/internal/transport/bt"
 	"github.com/BlankTrail/avito-monitor/internal/transport/direct"
+
+	"github.com/BlankTrail/avito-monitor/avito"
 )
 
 func runCmd(args []string) error {
@@ -101,8 +103,22 @@ func runOnce(ctx context.Context, s *store.Store, f *transport.Fetcher, w store.
 		return err
 	}
 
+	// The URL to fetch is built from what was pasted rather than being it.
+	// avito.SearchURL forces s=104 — page one of a DATE-sorted query is the
+	// only window in which «new listing» is a set difference rather than a
+	// guess — puts the host on the surface the watch actually chose, and
+	// refuses anything past page two.
+	//
+	// Before this the pasted URL was fetched exactly as pasted, so a watch on a
+	// relevance-sorted page was computing differences between two orderings of
+	// an unchanged market and reporting reshuffles as arrivals.
+	target, err := avito.SearchURL(w.URL, w.Surface, 1)
+	if err != nil {
+		return fmt.Errorf("наблюдение %d: %w", w.ID, err)
+	}
+
 	started := time.Now().Unix()
-	res, ferr := f.Fetch(ctx, w.URL)
+	res, ferr := f.Fetch(ctx, target)
 	finished := time.Now().Unix()
 
 	p := store.Pass{

@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"net/url"
 	"strconv"
 	"strings"
 
@@ -566,21 +565,17 @@ func watchFromForm(r *http.Request) (store.Watch, error) {
 // site would spend a pass and a pacing slot to arrive at a page the extractor
 // cannot read, and report it as a collection failure.
 func checkSearchURL(raw string) error {
-	if raw == "" {
+	if strings.TrimSpace(raw) == "" {
 		return errors.New("не задана ссылка")
 	}
-	u, err := url.Parse(raw)
-	if err != nil {
-		return errors.New("ссылку не удалось разобрать")
-	}
-	if u.Scheme != "http" && u.Scheme != "https" {
-		return errors.New("ссылка должна начинаться с http:// или https://")
-	}
-	host := strings.ToLower(u.Hostname())
-	// The suffix check carries its dot deliberately: without it
-	// «avito.ru.example.com» ends in «avito.ru» and would be accepted.
-	if host != "avito.ru" && !strings.HasSuffix(host, ".avito.ru") {
-		return errors.New("это не ссылка на avito.ru")
+	// Checked by the same function that will build the URL to fetch, and that
+	// is the point. This screen used to accept any *.avito.ru host while
+	// avito.ParseSearch accepts three — so a watch could save cleanly here and
+	// fail on every pass afterwards, which is the worst shape a refusal can
+	// take: no refusal at all, then silence.
+	if _, err := avito.ParseSearch(raw); err != nil {
+		return errors.New("это не похоже на ссылку поиска Авито: " +
+			"скопируйте её из адресной строки со страницы выдачи")
 	}
 	return nil
 }
