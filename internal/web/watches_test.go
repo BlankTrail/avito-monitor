@@ -102,7 +102,7 @@ func TestAnUrlThatIsNotAvitoIsRefused(t *testing.T) {
 		"https://avito.ru/all?q=a", "https://m.avito.ru/all?q=a",
 		"https://www.avito.ru/moskva/telefony?q=a",
 	} {
-		if err := checkSearchURL(good); err != nil {
+		if _, err := checkSearchURL(good); err != nil {
 			t.Errorf("%q was refused: %v", good, err)
 		}
 	}
@@ -632,8 +632,79 @@ func TestTheScreenAndTheCollectorAgreeOnWhatAUrlIs(t *testing.T) {
 		"https://www.avito.ru/moskva/telefony?q=x",
 		"https://avito.ru/all?q=x",
 	} {
-		if err := checkSearchURL(good); err != nil {
+		if _, err := checkSearchURL(good); err != nil {
 			t.Errorf("%q was refused: %v", good, err)
+		}
+	}
+}
+
+// TestAShopLinkBecomesASellerWatchWithoutBeingAsked. The person pasting a shop
+// link is watching a competitor, not filling in a form: they should not have to
+// know that a shop page has one page and only a desktop spelling.
+func TestAShopLinkBecomesASellerWatchWithoutBeingAsked(t *testing.T) {
+	s := newServer(t)
+	// Mobile and two pages in the form, both wrong for a shop, both silently
+	// corrected — the fields exist for search watches and a shop has no use
+	// for either answer.
+	form := addWatchForm("конкурент", "https://www.avito.ru/brands/abc123/all", 600)
+	form.Set("surface", "mobile")
+	form.Set("pages", "2")
+	if rec := post(t, s, "/watches", form); rec.Code != http.StatusSeeOther {
+		t.Fatalf("POST /watches = %d (%s)", rec.Code, rec.Body.String())
+	}
+	ws, err := s.Store.Watches(context.Background())
+	if err != nil || len(ws) != 1 {
+		t.Fatalf("watches = %+v (%v)", ws, err)
+	}
+	switch {
+	case ws[0].Kind != "seller":
+		t.Errorf("kind = %q, а ссылка была на магазин", ws[0].Kind)
+	case ws[0].Surface != "desktop":
+		t.Errorf("surface = %q: страница магазина читается только десктопной",
+			ws[0].Surface)
+	case ws[0].MaxPages != 1:
+		t.Errorf("max_pages = %d, а у магазина одна страница", ws[0].MaxPages)
+	}
+}
+
+// TestAnOrdinarySearchIsStillASearchWatch, so the switch above cannot quietly
+// turn everything into a seller.
+func TestAnOrdinarySearchIsStillASearchWatch(t *testing.T) {
+	s := newServer(t)
+	post(t, s, "/watches", addWatchForm("iphone", "https://m.avito.ru/all?q=iphone", 300))
+	ws, _ := s.Store.Watches(context.Background())
+	if len(ws) != 1 || ws[0].Kind != "search" {
+		t.Fatalf("kind = %+v", ws)
+	}
+}
+
+// TestAPrivateProfileIsRefusedByName. It looks exactly like a shop to whoever
+// is looking at it, so «неверная ссылка» would be a lie by omission: the link
+// is fine and this version cannot follow it.
+func TestAPrivateProfileIsRefusedByName(t *testing.T) {
+	s := newServer(t)
+	rec := post(t, s, "/watches",
+		addWatchForm("человек", "https://www.avito.ru/user/deadbeef/profile", 600))
+	body := rec.Body.String()
+	if !strings.Contains(body, "частным продавцом") {
+		t.Fatalf("экран не назвал причину:\n%s", body)
+	}
+	if strings.Contains(body, "скопируйте её из адресной строки со страницы выдачи") {
+		t.Error("экран посоветовал сделать то, что человек уже сделал")
+	}
+	ws, _ := s.Store.Watches(context.Background())
+	if len(ws) != 0 {
+		t.Errorf("наблюдение всё-таки сохранилось: %+v", ws)
+	}
+}
+
+// TestTheFormSaysAShopLinkWorks. The feature is invisible otherwise: nobody
+// tries pasting a shop URL into a field labelled «ссылка на поиск».
+func TestTheFormSaysAShopLinkWorks(t *testing.T) {
+	body := get(t, newServer(t), "/").Body.String()
+	for _, want := range []string{"brands", "магазин", "user"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("форма не упоминает %q", want)
 		}
 	}
 }

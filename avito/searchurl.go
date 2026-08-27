@@ -35,6 +35,36 @@ var ErrDeepPagination = errors.New("avito: дальше второй стран�
 // ErrNotASearch is returned for something that is not an Avito search page.
 var ErrNotASearch = errors.New("avito: это не похоже на страницу поиска Авито")
 
+// ErrPrivateSeller is returned for a private seller's profile.
+//
+// Named rather than silently broken, which is the spec's own wording. A company
+// has /brands/<slug>, which is a page this product can read; a private seller is
+// identified through iva.UserInfoStep[].payload.profile, which appears on about
+// twenty rows in fifty — so a watch on one would be a watch that sometimes knew
+// who it was watching. M1 supports company seller watches and says so.
+var ErrPrivateSeller = errors.New(
+	"avito: следить можно за магазином (ссылка вида /brands/…), " +
+		"а за частным продавцом эта версия не умеет")
+
+// Kind is what a watch is watching.
+type Kind string
+
+const (
+	// KindSearch is a query's first page, sorted by date.
+	KindSearch Kind = "search"
+	// KindSeller is a company's own page.
+	//
+	// A desktop watch and one request rather than two: /brands/<slug> is
+	// already canonical and needs no shell hop — the measurement found a single
+	// fetch carrying its own data-mfe-state block with forty-five listings in
+	// it, which desktop.catalog.v1 reads unchanged.
+	//
+	// It is a desktop watch because the mobile spelling of a seller page was
+	// never measured, and an unmeasured claim in the one place this product
+	// promises to watch a competitor is not a saving.
+	KindSeller Kind = "seller"
+)
+
 // sortByDate is Avito's own value for «сначала новые».
 //
 // Fixed and not user-configurable in M1, which is a decision rather than an
@@ -58,6 +88,8 @@ var keptParams = []string{
 
 // Search is a pasted URL, parsed.
 type Search struct {
+	// Kind is what this URL turned out to be.
+	Kind Kind
 	// Path is the region and category, e.g. "/moskva/telefony". Carried and
 	// never dropped: dropping it silently widens a Moscow watch to the whole
 	// country, which looks like the watch working and is a different market.
@@ -84,6 +116,19 @@ func ParseSearch(raw string) (Search, error) {
 		path = "/all"
 	}
 
+	// A private seller's profile, refused by name. The alternative — accepting
+	// it and watching whatever /user/<hash> happens to render — is a watch that
+	// sometimes knows who it is watching, which is worse than one that says it
+	// cannot.
+	if strings.HasPrefix(path, "/user/") {
+		return Search{}, ErrPrivateSeller
+	}
+	if slug := brandSlug(path); slug != "" {
+		// Everything after the slug is Avito's own navigation inside the shop
+		// and is dropped: the watch is on the shop.
+		return Search{Kind: KindSeller, Path: "/brands/" + slug}, nil
+	}
+
 	in := u.Query()
 	out := url.Values{}
 	for _, name := range keptParams {
@@ -91,7 +136,7 @@ func ParseSearch(raw string) (Search, error) {
 			out.Set(name, v)
 		}
 	}
-	return Search{Path: path, Params: out}, nil
+	return Search{Kind: KindSearch, Path: path, Params: out}, nil
 }
 
 // URL is what to fetch for one surface and one page.
@@ -113,6 +158,34 @@ func (s Search) URL(surface Surface, page int) (string, error) {
 	path := s.Path
 	if path == "" {
 		path = "/all"
+	}
+	// A seller page needs the sort as much as a search does — measured, not
+	// assumed, and the assumption was wrong.
+	//
+	// The bare shop URL is a showcase, not a page: three fetches of one shop a
+	// minute apart returned twelve listings each time and a different twelve,
+	// with items dropping out and reappearing while the shop itself did
+	// nothing. A watch computing set differences against that reports arrivals
+	// and departures that never happened, every single pass. With s=104 the
+	// same shop returned the identical twelve in the identical order across
+	// three fetches, newest first.
+	//
+	// No p= though, and no host from the surface: a shop page answers in one
+	// request on www.avito.ru with no canonical hop, and the mobile spelling of
+	// one was never measured. Twelve per page rather than fifty is the real
+	// cost of the second thing — a shop that lists more than twelve between two
+	// passes loses the overflow off page one, which is an argument about the
+	// interval and not about the URL.
+	if s.Kind == KindSeller {
+		if page > 1 {
+			return "", ErrDeepPagination
+		}
+		q := url.Values{}
+		q.Set("s", sortByDate)
+		return (&url.URL{
+			Scheme: "https", Host: "www.avito.ru", Path: path,
+			RawQuery: q.Encode(),
+		}).String(), nil
 	}
 
 	q := url.Values{}

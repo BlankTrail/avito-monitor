@@ -199,3 +199,92 @@ func TestTheSameInputGivesTheSameURL(t *testing.T) {
 		}
 	}
 }
+
+// TestAShopUrlIsASellerWatch.
+//
+// One request rather than two: /brands/<slug> is already canonical and needs no
+// shell hop. Measured against a live shop — a single fetch, no redirect, twelve
+// listings read by desktop.profile.v1, each carrying the shop's own key, and
+// the shop's whole stock declared as 1200.
+func TestAShopUrlIsASellerWatch(t *testing.T) {
+	s, err := ParseSearch("https://www.avito.ru/brands/bioniqo?src=search_seller_info")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Kind != KindSeller {
+		t.Errorf("Kind = %q", s.Kind)
+	}
+	got, err := s.URL(SurfaceDesktop, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "https://www.avito.ru/brands/bioniqo?s=104" {
+		t.Errorf("= %s", got)
+	}
+	// No page: twelve listings and one request, and page two costs a second.
+	if strings.Contains(got, "p=") {
+		t.Errorf("a seller page carried a page number: %s", got)
+	}
+}
+
+// TestAShopPageIsSortedOrItIsNoise.
+//
+// The finding that made this a defect and not a preference. Three fetches of
+// one live shop, a minute apart, against the bare URL: twelve listings each
+// time and a different twelve, items dropping out and coming back while the
+// shop did nothing. The same shop with s=104 returned the identical twelve in
+// the identical order all three times.
+//
+// So a seller watch on an unsorted shop page would have reported arrivals and
+// departures that never happened, on every pass, for ever — the same defect
+// s=104 was forced to fix for search, in the one place a person is watching a
+// competitor and would believe it.
+func TestAShopPageIsSortedOrItIsNoise(t *testing.T) {
+	got, err := SearchURL("https://www.avito.ru/brands/abc123/all", SurfaceDesktop, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, "s="+sortByDate) {
+		t.Fatalf("витрина без сортировки: %s", got)
+	}
+}
+
+// TestASellerWatchIsAlwaysDesktop.
+//
+// The mobile spelling of a seller page was never measured, and an unmeasured
+// claim in the one place this product promises to watch a competitor is not a
+// saving.
+func TestASellerWatchIsAlwaysDesktop(t *testing.T) {
+	got, err := SearchURL("https://m.avito.ru/brands/bioniqo", SurfaceMobile, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(got, "https://www.avito.ru/brands/") {
+		t.Errorf("= %s", got)
+	}
+}
+
+// TestAPrivateSellerIsRefusedByNameAndNotSilentlyBroken.
+//
+// A company has /brands/<slug>, which this product can read. A private seller
+// is identified through a field that appears on about twenty rows in fifty, so
+// a watch on one would be a watch that sometimes knew who it was watching —
+// worse than one that says it cannot.
+func TestAPrivateSellerIsRefusedByNameAndNotSilentlyBroken(t *testing.T) {
+	_, err := ParseSearch("https://www.avito.ru/user/8f3c1d2e9a/profile/?src=search")
+	if !errors.Is(err, ErrPrivateSeller) {
+		t.Fatalf("= %v, want ErrPrivateSeller", err)
+	}
+	if !strings.Contains(err.Error(), "магазин") {
+		t.Errorf("the refusal does not say what IS supported: %v", err)
+	}
+}
+
+// TestASellerPageHasNoSecondPageHere, because max_pages is one for a seller
+// watch and the schema records it as one.
+func TestASellerPageHasNoSecondPage(t *testing.T) {
+	if _, err := SearchURL("https://www.avito.ru/brands/x", SurfaceDesktop, 2); !errors.Is(
+		err, ErrDeepPagination) {
+		t.Errorf("= %v", err)
+	}
+}

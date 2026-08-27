@@ -223,7 +223,15 @@ func report(res transport.Result, leaser transport.Leaser, pacer *transport.Pace
 		case avito.PriceNegotiable:
 			price = "договорная"
 		}
-		fmt.Printf("%3d  %-12d %14s  %s\n", i+1, l.ItemID, price, l.Title)
+		// The seller, because carrying it is the entire reason the desktop
+		// surface costs two requests instead of one — and a diagnostic that
+		// does not show the thing under test cannot answer whether it worked.
+		seller := l.SellerKey
+		if seller == "" {
+			seller = "—"
+		}
+		fmt.Printf("%3d  %-12d %14s  %-22s  %s\n",
+			i+1, l.ItemID, price, seller, l.Title)
 	}
 }
 
