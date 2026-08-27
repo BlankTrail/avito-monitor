@@ -97,13 +97,13 @@ func (s *Server) collectionState(ctx context.Context, watches []store.Watch) str
 	// silence look normal.
 	if age > int64(3*shortest) {
 		return `<div class="card">` + note("bad", fmt.Sprintf(
-			"Сбор не идёт: последний проход был %s назад, а самое частое "+
+			"Сбор не идёт: последний проход был %s, а самое частое "+
 				"наблюдение опрашивается раз в %d с. Проверьте, запущен ли "+
 				"«avitomon panel» без -no-collect, и не остановлены ли "+
 				"наблюдения.", ago(last, s.now().Unix()), shortest)) + `</div>`
 	}
 	return `<div class="card">` + note("neutral", fmt.Sprintf(
-		"Сбор идёт: последний проход %s назад.", ago(last, s.now().Unix()))) + `</div>`
+		"Сбор идёт: последний проход %s.", ago(last, s.now().Unix()))) + `</div>`
 }
 
 // surfaceAdvice is which surface this installation can actually use.

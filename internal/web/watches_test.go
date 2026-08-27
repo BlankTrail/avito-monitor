@@ -343,8 +343,15 @@ func TestTheWatchesScreenSaysWhetherCollectionIsRunning(t *testing.T) {
 
 	// A recent pass: collection is running.
 	aPass(t, s, id, s.now().Unix()-30, "ok", "dom", true, 30)
-	if body = get(t, s, "/").Body.String(); !strings.Contains(body, "Сбор идёт") {
+	body = get(t, s, "/").Body.String()
+	if !strings.Contains(body, "Сбор идёт") {
 		t.Errorf("a recent pass does not read as collecting: %s", body)
+	}
+	// ago() already ends in «назад». Adding it again produced «23 секунды
+	// назад назад» on the live screen, which is the kind of thing only looking
+	// at it catches — so the test looks for it now.
+	if strings.Contains(body, "назад назад") {
+		t.Errorf("the sentence says «назад» twice: %s", body)
 	}
 }
 
