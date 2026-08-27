@@ -248,8 +248,18 @@ func (s *Server) watchTable(ctx context.Context, watches []store.Watch) string {
 		state := `<span class="pill ok">идёт</span>`
 		switch {
 		case w.State == "halted":
-			state = fmt.Sprintf(`<span class="pill bad">остановлено: %s</span>`,
-				esc(w.HaltedReason))
+			// The reason, and the way out. A halt is the only state this
+			// program will not leave on its own — «halted_reason is never
+			// cleared by the program» — so the row that shows it has to carry
+			// the button, or the exit is a command line somebody has to find.
+			state = fmt.Sprintf(`<span class="pill bad">остановлено: %s</span>`+
+				`<form method="post" action="/watches/resume" `+
+				`data-confirm="Возобновить? Ничего не проверяется: если стена `+
+				`на месте, следующий проход снова остановится — это один `+
+				`запрос и честный ответ.">`+
+				`<input type="hidden" name="id" value="%d">`+
+				`<button class="btn" type="submit">Возобновить</button></form>`,
+				esc(w.HaltedReason), w.ID)
 		case !w.Enabled:
 			state = `<span class="pill warn">выключено</span>`
 		case w.SeededAt == nil:
@@ -559,4 +569,21 @@ func (s *Server) addressCount(ctx context.Context) (int, error) {
 		return 1, nil
 	}
 	return total, nil
+}
+
+// resumeWatch clears a halt from the panel.
+//
+// The same act as «avitomon watch resume» and deliberately the same store call:
+// two spellings of one correction is how they drift apart.
+func (s *Server) resumeWatch(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.FormValue("id"), 10, 64)
+	if err != nil || id <= 0 {
+		http.Error(w, "нет такого наблюдения", http.StatusBadRequest)
+		return
+	}
+	if _, err := s.Store.ResumeWatch(r.Context(), id, s.now().Unix()); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, "/", http.StatusSeeOther)
 }

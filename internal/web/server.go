@@ -167,6 +167,7 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /watches", s.auth(http.HandlerFunc(s.saveWatch)))
 	mux.Handle("POST /watches/delete", s.auth(http.HandlerFunc(s.deleteWatch)))
 	mux.Handle("POST /watches/toggle", s.auth(http.HandlerFunc(s.toggleWatch)))
+	mux.Handle("POST /watches/resume", s.auth(http.HandlerFunc(s.resumeWatch)))
 
 	mux.Handle("GET /first-run", s.auth(http.HandlerFunc(s.firstRunPage)))
 	mux.Handle("POST /first-run", s.auth(http.HandlerFunc(s.saveFirstRun)))

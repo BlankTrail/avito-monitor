@@ -451,3 +451,50 @@ func slowPass(t *testing.T, s *Server, watchID, at int64, seconds int64) {
 		t.Fatal(err)
 	}
 }
+
+// TestAHaltedWatchCarriesItsWayOut.
+//
+// A halt is the only state this program will not leave on its own —
+// halted_reason is never cleared by the program — so the row that shows it has
+// to carry the button, or the exit is a command line somebody has to find.
+func TestAHaltedWatchCarriesItsWayOut(t *testing.T) {
+	s := newServer(t)
+	ctx := context.Background()
+	id := aWatch(t, s, "остановлено")
+	if err := s.Store.MarkHalted(ctx, id, "geetest", 1500); err != nil {
+		t.Fatal(err)
+	}
+
+	body := get(t, s, "/").Body.String()
+	if !strings.Contains(body, "geetest") {
+		t.Error("the reason is not shown")
+	}
+	if !strings.Contains(body, "Возобновить") {
+		t.Errorf("a halted watch has no way out on screen: %s", body)
+	}
+	// And it says plainly that resuming promises nothing.
+	if !strings.Contains(body, "Ничего не проверяется") {
+		t.Error("the confirmation over-promises")
+	}
+
+	rec := post(t, s, "/watches/resume", url.Values{"id": {strconv.FormatInt(id, 10)}})
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("= %d (%s)", rec.Code, rec.Body.String())
+	}
+	w, err := s.Store.Watch(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w.State != "idle" || w.HaltedReason != "" {
+		t.Errorf("watch = %q / %q", w.State, w.HaltedReason)
+	}
+}
+
+// TestAHealthyWatchHasNoResumeButton, because there is nothing to resume.
+func TestAHealthyWatchHasNoResumeButton(t *testing.T) {
+	s := newServer(t)
+	aWatch(t, s, "работает")
+	if strings.Contains(get(t, s, "/").Body.String(), "Возобновить") {
+		t.Error("a healthy watch was offered a resume button")
+	}
+}

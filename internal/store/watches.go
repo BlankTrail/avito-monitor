@@ -9,6 +9,7 @@ import (
 	"fmt"
 
 	"github.com/BlankTrail/avito-monitor/avito"
+	"github.com/BlankTrail/avito-monitor/internal/track"
 )
 
 // ErrNoSuchWatch is returned by Watch for an id that is not there.
@@ -154,4 +155,74 @@ func (s *Store) SetNextDue(ctx context.Context, id, at int64) error {
 		return fmt.Errorf("store: schedule watch %d: %w", id, err)
 	}
 	return nil
+}
+
+// ResumeWatch clears a halt. A person's act and never the program's.
+//
+// The spec is exact about what it writes and about what it does not do: state
+// back to idle, the reason cleared, halted_at cleared, next_due_at now. It
+// re-tests nothing and promises nothing — if the wall is still there the next
+// pass halts again with a fresh reason, which costs one request and buys a
+// truthful answer.
+//
+// The resumption is recorded as a change marked backfill, so the notifier skips
+// it. An un-halt that sent «your install is blocked» through the global rule
+// would be a lie in the one message that has to be trustworthy.
+func (s *Store) ResumeWatch(ctx context.Context, id, at int64) (bool, error) {
+	s.wmu.Lock()
+	defer s.wmu.Unlock()
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, fmt.Errorf("store: resume watch %d: %w", id, err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var reason string
+	if err := tx.QueryRowContext(ctx,
+		`SELECT halted_reason FROM watches WHERE id = ? AND state = 'halted'`,
+		id).Scan(&reason); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			// Not halted. Not an error either: «возобновить всё» over a list
+			// where one has already recovered must not fail on it.
+			return false, nil
+		}
+		return false, fmt.Errorf("store: resume watch %d: %w", id, err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE watches
+		SET state = 'idle', halted_reason = '', halted_at = NULL,
+		    next_due_at = ?, updated_at = ?
+		WHERE id = ?`, at, at, id); err != nil {
+		return false, fmt.Errorf("store: resume watch %d: %w", id, err)
+	}
+	if err := insertChange(ctx, tx, ChangeRow{
+		Kind: track.KindTransportBlocked, WatchID: id, TS: at,
+		Field: "halt", Was: reason, HadBefore: true,
+		// Backfill, so the notifier skips it. The reason travels in Was so the
+		// panel can say what was cleared.
+		Backfill: true, Confidence: 1.0, Producer: "user",
+	}); err != nil {
+		return false, err
+	}
+	return true, tx.Commit()
+}
+
+// HaltedWatches is every watch behind a wall, for «возобновить всё».
+func (s *Store) HaltedWatches(ctx context.Context) ([]int64, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id FROM watches WHERE state = 'halted' ORDER BY id`)
+	if err != nil {
+		return nil, fmt.Errorf("store: halted watches: %w", err)
+	}
+	defer rows.Close()
+	var out []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("store: halted watches: %w", err)
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
 }

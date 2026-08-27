@@ -154,3 +154,88 @@ func TestSetNextDueMovesTheWatchForward(t *testing.T) {
 		t.Error("the watch never came due again")
 	}
 }
+
+// TestResumingClearsTheHaltAndPromisesNothing.
+//
+// A person's act and never the program's: a monitor that decides on its own
+// that a wall has gone away is a monitor that resumes into it all night. This
+// re-tests nothing — if the wall is still there the next pass halts again with
+// a fresh reason, which costs one request and buys a truthful answer.
+func TestResumingClearsTheHaltAndPromisesNothing(t *testing.T) {
+	s := openTemp(t)
+	ctx := context.Background()
+	id := addTestWatch(t, s, "наблюдение", 300)
+	if err := s.MarkHalted(ctx, id, "geetest", 1500); err != nil {
+		t.Fatal(err)
+	}
+
+	ok, err := s.ResumeWatch(ctx, id, 2000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("a halted watch reported nothing to resume")
+	}
+	w, err := s.Watch(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w.State != "idle" || w.HaltedReason != "" {
+		t.Errorf("watch = %q / %q", w.State, w.HaltedReason)
+	}
+	if w.NextDueAt != 2000 {
+		t.Errorf("next_due_at = %d, want now", w.NextDueAt)
+	}
+}
+
+// TestAResumptionIsRecordedButNeverSent.
+//
+// An un-halt that sent «your install is blocked» through the global rule would
+// be a lie in the one message that has to be trustworthy — so the row is
+// written with the reason it cleared and marked backfill, which is what makes
+// the notifier skip it.
+func TestAResumptionIsRecordedButNeverSent(t *testing.T) {
+	s := openTemp(t)
+	ctx := context.Background()
+	id := addTestWatch(t, s, "наблюдение", 300)
+	if err := s.MarkHalted(ctx, id, "доступ ограничен", 1500); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.ResumeWatch(ctx, id, 2000); err != nil {
+		t.Fatal(err)
+	}
+	changes, err := s.Changes(ctx, id, 0, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(changes) != 1 {
+		t.Fatalf("%d changes", len(changes))
+	}
+	if !changes[0].Backfill {
+		t.Error("the resumption was not marked backfill; the notifier would send it")
+	}
+	if changes[0].Was != "доступ ограничен" {
+		t.Errorf("the cleared reason was lost: %q", changes[0].Was)
+	}
+}
+
+// TestResumingAWatchThatIsNotHaltedIsNotAnError.
+//
+// «Возобновить всё» over a list where one has already recovered must not fail
+// on it.
+func TestResumingAWatchThatIsNotHaltedIsNotAnError(t *testing.T) {
+	s := openTemp(t)
+	ctx := context.Background()
+	id := addTestWatch(t, s, "наблюдение", 300)
+
+	ok, err := s.ResumeWatch(ctx, id, 2000)
+	if err != nil {
+		t.Fatalf("resuming a healthy watch failed: %v", err)
+	}
+	if ok {
+		t.Error("a healthy watch reported that it was resumed")
+	}
+	if n := countRows(t, s, `SELECT count(*) FROM changes`); n != 0 {
+		t.Errorf("%d changes written for a watch that was not halted", n)
+	}
+}
