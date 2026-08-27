@@ -275,3 +275,16 @@ func (s *Store) SetQuietHours(ctx context.Context, fromMin, toMin int) error {
 	}
 	return nil
 }
+
+// LastPassAt is when the newest pass was written, or zero when there is none.
+//
+// The panel's answer to «идёт ли сбор». Read from the data and not from a
+// setting: a setting says what was intended, and this has to say what happened.
+func (s *Store) LastPassAt(ctx context.Context) (int64, error) {
+	var at sql.NullInt64
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT max(started_at) FROM passes`).Scan(&at); err != nil {
+		return 0, fmt.Errorf("store: last pass: %w", err)
+	}
+	return at.Int64, nil
+}

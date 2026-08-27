@@ -253,3 +253,20 @@ func (s *Store) RecordUserChange(ctx context.Context, c ChangeRow) error {
 	}
 	return tx.Commit()
 }
+
+// RecordWorkerPanic writes down that a supervised goroutine crashed.
+//
+// A changes row and not only a log line, because the log is a file nobody has
+// open and the changes table is what the panel reads. track.KindWorkerPanicked
+// has existed since increment 1 with nothing writing it; this is its writer.
+//
+// watch_id is zero: a background goroutine belongs to the installation and not
+// to one watch, and attributing a crash to whichever watch happened to be next
+// would be a lie in the one row that has to be trustworthy.
+func (s *Store) RecordWorkerPanic(ctx context.Context, name, stack string, at int64) error {
+	return s.RecordUserChange(ctx, ChangeRow{
+		Kind: track.KindWorkerPanicked, TS: at,
+		Field: name, Now: stack, HasNow: true,
+		Confidence: 1.0, Producer: "supervise",
+	})
+}
