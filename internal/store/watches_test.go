@@ -208,14 +208,30 @@ func TestAResumptionIsRecordedButNeverSent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(changes) != 1 {
+	// Two: the halt said so, and the resumption says it was cleared. The halt
+	// is meant to be sent and the resumption is not.
+	if len(changes) != 2 {
 		t.Fatalf("%d changes", len(changes))
 	}
-	if !changes[0].Backfill {
-		t.Error("the resumption was not marked backfill; the notifier would send it")
+	var halt, resumed ChangeRow
+	for _, c := range changes {
+		if c.Backfill {
+			resumed = c
+		} else {
+			halt = c
+		}
 	}
-	if changes[0].Was != "доступ ограничен" {
-		t.Errorf("the cleared reason was lost: %q", changes[0].Was)
+	if halt.Now != "доступ ограничен" {
+		t.Errorf("the halt did not carry its reason: %q", halt.Now)
+	}
+	if halt.Backfill {
+		t.Error("the halt was marked backfill; nobody would be told")
+	}
+	if resumed.Was != "доступ ограничен" {
+		t.Errorf("the cleared reason was lost: %q", resumed.Was)
+	}
+	if !resumed.Backfill {
+		t.Error("the resumption was not marked backfill; the notifier would send it")
 	}
 }
 
@@ -237,5 +253,29 @@ func TestResumingAWatchThatIsNotHaltedIsNotAnError(t *testing.T) {
 	}
 	if n := countRows(t, s, `SELECT count(*) FROM changes`); n != 0 {
 		t.Errorf("%d changes written for a watch that was not halted", n)
+	}
+}
+
+// TestHittingTheSameWallTwiceSaysSoOnce.
+//
+// A wall is hit on every pass. Writing a change per pass would leave the rule's
+// six-hour floor suppressing a flood instead of describing a state — and the
+// suppression log would then be the flood.
+func TestHittingTheSameWallTwiceSaysSoOnce(t *testing.T) {
+	s := openTemp(t)
+	ctx := context.Background()
+	id := addTestWatch(t, s, "наблюдение", 300)
+
+	for _, at := range []int64{1500, 1800, 2100} {
+		if err := s.MarkHalted(ctx, id, "geetest", at); err != nil {
+			t.Fatal(err)
+		}
+	}
+	changes, err := s.Changes(ctx, id, 0, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(changes) != 1 {
+		t.Errorf("%d changes for one wall hit three times", len(changes))
 	}
 }

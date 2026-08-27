@@ -147,6 +147,44 @@ func (s *Server) paceWarnings(ctx context.Context, watches []store.Watch) string
 	return b.String()
 }
 
+// tooBroadWarnings names the watches whose query is wider than this product can
+// see the shape of.
+//
+// Avito pages through at most five thousand results, so above that a
+// date-sorted page one is a window onto something whose size is unknowable from
+// here — «new listing» stops being a set difference and becomes a guess about
+// the top of a firehose.
+//
+// It names pmin and pmax rather than saying «narrow it». Those are the two
+// parameters that actually narrow an Avito search without changing what is
+// being watched, and a person who has to go and find that out is a person who
+// narrows it by deleting the watch.
+//
+// Nothing slices automatically. A monitor that multiplies its own request
+// budget without being asked is a monitor that earns a 403.
+func tooBroadWarnings(watches []store.Watch) string {
+	var b strings.Builder
+	for _, w := range watches {
+		if !w.TooBroad || !w.Enabled {
+			continue
+		}
+		count := "больше пяти тысяч"
+		if w.LastTotalCount != nil {
+			count = fmt.Sprintf("%d", *w.LastTotalCount)
+		}
+		fmt.Fprintf(&b, `<div class="card">%s</div>`, note("warning", fmt.Sprintf(
+			"Наблюдение «%s» слишком широкое: под запрос попадает %s "+
+				"объявлений, а Авито отдаёт не больше пяти тысяч. Первая "+
+				"страница такого запроса — это верхушка потока, и «новое "+
+				"объявление» перестаёт быть надёжным. Сузьте запрос ценой: "+
+				"добавьте в ссылку pmin и pmax — например pmin=20000&pmax=60000. "+
+				"Сам продукт запрос не сузит: монитор, который без спроса "+
+				"умножает себе бюджет запросов, зарабатывает блокировку.",
+			w.Name, count)))
+	}
+	return b.String()
+}
+
 // surfaceAdvice is which surface this installation can actually use.
 //
 // Measured on live Avito, 25 August 2026, from one machine within minutes:
@@ -212,6 +250,7 @@ func (s *Server) renderWatches(w http.ResponseWriter, r *http.Request, problem s
 	}
 	body.WriteString(s.collectionState(ctx, watches))
 	body.WriteString(s.paceWarnings(ctx, watches))
+	body.WriteString(tooBroadWarnings(watches))
 
 	if problem != "" {
 		body.WriteString(`<div class="card">` + note("bad", problem) + `</div>`)

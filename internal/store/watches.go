@@ -130,14 +130,39 @@ func (s *Store) DueWatches(ctx context.Context, now int64, limit int) ([]Watch, 
 func (s *Store) MarkHalted(ctx context.Context, id int64, reason string, at int64) error {
 	s.wmu.Lock()
 	defer s.wmu.Unlock()
-	_, err := s.db.ExecContext(ctx, `
-		UPDATE watches SET state = 'halted', halted_reason = ?, halted_at = ?,
-		       updated_at = ?
-		WHERE id = ?`, reason, at, at, id)
+
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("store: halt watch %d: %w", id, err)
 	}
-	return nil
+	defer func() { _ = tx.Rollback() }()
+
+	// Halting a watch that is already halted writes nothing. Otherwise a wall
+	// that is hit on every pass would produce a change per pass, and the rule's
+	// six-hour floor would be suppressing a flood instead of describing a
+	// state.
+	res, err := tx.ExecContext(ctx, `
+		UPDATE watches SET state = 'halted', halted_reason = ?, halted_at = ?,
+		       updated_at = ?
+		WHERE id = ? AND state <> 'halted'`, reason, at, at, id)
+	if err != nil {
+		return fmt.Errorf("store: halt watch %d: %w", id, err)
+	}
+	if n, err := res.RowsAffected(); err != nil || n == 0 {
+		return tx.Commit()
+	}
+
+	// Said out loud. Without this the watch stops and the only evidence is a
+	// panel nobody has open — «Telegram gets exactly one message» needs a
+	// change row to be the message, and there was none.
+	if err := insertChange(ctx, tx, ChangeRow{
+		Kind: track.KindTransportBlocked, WatchID: id, TS: at,
+		Field: "halt", Now: reason, HasNow: true,
+		Confidence: 1.0, Producer: "transport",
+	}); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // SetNextDue schedules the next pass.

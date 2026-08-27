@@ -498,3 +498,44 @@ func TestAHealthyWatchHasNoResumeButton(t *testing.T) {
 		t.Error("a healthy watch was offered a resume button")
 	}
 }
+
+// TestAWatchWiderThanTheSiteWillPageIsNamedAndTold What To Do.
+//
+// Avito pages through at most five thousand results, so above that a
+// date-sorted page one is the top of a firehose and «new listing» stops being a
+// set difference. The spec asks for pmin and pmax by name, because a person who
+// has to go and find that out is a person who narrows the watch by deleting it.
+func TestAWatchWiderThanTheSiteWillPageIsNamed(t *testing.T) {
+	s := newServer(t)
+	id := aWatch(t, s, "всё подряд")
+	if _, err := s.Store.DB().Exec(`
+		UPDATE watches SET too_broad = 1, last_total_count = 59959 WHERE id = ?`,
+		id); err != nil {
+		t.Fatal(err)
+	}
+
+	body := get(t, s, "/").Body.String()
+	if !strings.Contains(body, "слишком широкое") {
+		t.Errorf("a watch over the cap is not named: %s", body)
+	}
+	if !strings.Contains(body, "59959") {
+		t.Error("the measured count is not shown")
+	}
+	if !strings.Contains(body, "pmin") || !strings.Contains(body, "pmax") {
+		t.Error("the two parameters that narrow it are not named")
+	}
+	// And it says the product will not do it for them, which is a decision
+	// rather than a limitation.
+	if !strings.Contains(body, "не сузит") {
+		t.Error("the screen does not say the product will not narrow it")
+	}
+}
+
+// TestANarrowWatchIsSaidNothingAbout.
+func TestANarrowWatchIsSaidNothingAbout(t *testing.T) {
+	s := newServer(t)
+	aWatch(t, s, "узкое")
+	if strings.Contains(get(t, s, "/").Body.String(), "слишком широкое") {
+		t.Error("a narrow watch was warned about")
+	}
+}
