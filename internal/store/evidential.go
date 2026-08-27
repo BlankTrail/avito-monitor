@@ -82,7 +82,31 @@ func passFacts(p Pass, w Watch, prev prevPass) lifecycle.PassFacts {
 // real pass would then look like a recovery rather than a reading, which is the
 // collapse guard defeating itself.
 func updateBaseline(ctx context.Context, tx *sql.Tx, p Pass, evidential bool) error {
-	if !evidential || p.TotalCount == nil {
+	if p.TotalCount == nil {
+		// No number at all. The guard does not fire and the baseline does not
+		// move: a missing number must never become arithmetic on zero, which
+		// is the same rule the collapse test keeps.
+		return nil
+	}
+
+	// too_broad is set from any pass that carried a count, evidential or not,
+	// and that is deliberately not the baseline's rule. The count is a number
+	// the SITE stated; the baseline is a comparison WE make, and only a
+	// reading we would argue from may move it. A seeding pass is not evidence
+	// about absence and is perfectly good evidence about how many results a
+	// query has.
+	//
+	// Set and never cleared here, and that asymmetry is the design: saying so
+	// once is the point, and a person narrows the query with a price band, so
+	// the flag goes with the edit.
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE watches SET too_broad = max(too_broad, ?), updated_at = ?
+		WHERE id = ?`,
+		*p.TotalCount > tooBroadAbove, p.StartedAt, p.WatchID); err != nil {
+		return fmt.Errorf("store: too broad: %w", err)
+	}
+
+	if !evidential {
 		return nil
 	}
 	if _, err := tx.ExecContext(ctx,
@@ -92,3 +116,12 @@ func updateBaseline(ctx context.Context, tx *sql.Tx, p Pass, evidential bool) er
 	}
 	return nil
 }
+
+// tooBroadAbove is where a watch stops being a watch and starts being a market.
+//
+// Four and a half thousand, against Avito's own five-thousand cap on what a
+// result set will page through. Above it, page one is a window onto something
+// this product cannot see the shape of — and nothing slices automatically,
+// because a monitor that multiplies its own request budget without being asked
+// is a monitor that earns a 403.
+const tooBroadAbove = 4500

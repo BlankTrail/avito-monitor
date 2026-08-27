@@ -1,0 +1,62 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+#
+# A systemd SYSTEM unit, for machines nobody logs into.
+#
+# internal/autostart writes a systemd USER unit, which is the right thing on a
+# laptop: it starts when somebody logs in and stops when they log out, and it
+# needs no root. This is the other case — a server that runs headless — and it
+# is a file an administrator installs rather than something the program writes,
+# because a program that installs its own root service is a program asking for
+# a privilege it does not otherwise need.
+#
+#   install -m644 avitomon.service /etc/systemd/system/
+#   useradd --system --home /var/lib/avitomon --create-home avitomon
+#   systemctl daemon-reload && systemctl enable --now avitomon
+#
+# Then open the panel over an SSH tunnel:
+#   ssh -N -L 8765:127.0.0.1:8765 <host>
+
+[Unit]
+Description=Avito Monitor
+Documentation=https://github.com/BlankTrail/avito-monitor
+# network-online and not network: the first fetch happens seconds after start,
+# and a scheduler that begins by failing a DNS lookup spends its first backoff
+# on the machine booting rather than on anything about Avito.
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=avitomon
+Group=avitomon
+WorkingDirectory=/var/lib/avitomon
+ExecStart=/usr/local/bin/avitomon panel -db /var/lib/avitomon/avito.db -port 8765
+
+# Restart on a crash and never on a clean exit. A clean exit here means the
+# operator stopped it or the port could not be opened — and the second is a
+# configuration mistake that restarting cannot fix, only repeat.
+Restart=on-failure
+RestartSec=10s
+
+# The program deliberately does NOT exit when every watch is halted: a process
+# that exits is restarted into the same wall for ever. It fails /healthz
+# instead. Nothing here polls that — systemd would only restart, which is the
+# one thing that cannot help — but a monitoring system should:
+#   curl -fsS http://127.0.0.1:8765/healthz
+
+# It needs one directory and the network, and nothing else.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/avitomon
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+
+[Install]
+WantedBy=multi-user.target

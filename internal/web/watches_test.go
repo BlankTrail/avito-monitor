@@ -451,3 +451,189 @@ func slowPass(t *testing.T, s *Server, watchID, at int64, seconds int64) {
 		t.Fatal(err)
 	}
 }
+
+// TestAHaltedWatchCarriesItsWayOut.
+//
+// A halt is the only state this program will not leave on its own —
+// halted_reason is never cleared by the program — so the row that shows it has
+// to carry the button, or the exit is a command line somebody has to find.
+func TestAHaltedWatchCarriesItsWayOut(t *testing.T) {
+	s := newServer(t)
+	ctx := context.Background()
+	id := aWatch(t, s, "остановлено")
+	if err := s.Store.MarkHalted(ctx, id, "geetest", 1500); err != nil {
+		t.Fatal(err)
+	}
+
+	body := get(t, s, "/").Body.String()
+	if !strings.Contains(body, "geetest") {
+		t.Error("the reason is not shown")
+	}
+	if !strings.Contains(body, "Возобновить") {
+		t.Errorf("a halted watch has no way out on screen: %s", body)
+	}
+	// And it says plainly that resuming promises nothing.
+	if !strings.Contains(body, "Ничего не проверяется") {
+		t.Error("the confirmation over-promises")
+	}
+
+	rec := post(t, s, "/watches/resume", url.Values{"id": {strconv.FormatInt(id, 10)}})
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("= %d (%s)", rec.Code, rec.Body.String())
+	}
+	w, err := s.Store.Watch(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w.State != "idle" || w.HaltedReason != "" {
+		t.Errorf("watch = %q / %q", w.State, w.HaltedReason)
+	}
+}
+
+// TestAHealthyWatchHasNoResumeButton, because there is nothing to resume.
+func TestAHealthyWatchHasNoResumeButton(t *testing.T) {
+	s := newServer(t)
+	aWatch(t, s, "работает")
+	if strings.Contains(get(t, s, "/").Body.String(), "Возобновить") {
+		t.Error("a healthy watch was offered a resume button")
+	}
+}
+
+// TestAWatchWiderThanTheSiteWillPageIsNamedAndTold What To Do.
+//
+// Avito pages through at most five thousand results, so above that a
+// date-sorted page one is the top of a firehose and «new listing» stops being a
+// set difference. The spec asks for pmin and pmax by name, because a person who
+// has to go and find that out is a person who narrows the watch by deleting it.
+func TestAWatchWiderThanTheSiteWillPageIsNamed(t *testing.T) {
+	s := newServer(t)
+	id := aWatch(t, s, "всё подряд")
+	if _, err := s.Store.DB().Exec(`
+		UPDATE watches SET too_broad = 1, last_total_count = 59959 WHERE id = ?`,
+		id); err != nil {
+		t.Fatal(err)
+	}
+
+	body := get(t, s, "/").Body.String()
+	if !strings.Contains(body, "слишком широкое") {
+		t.Errorf("a watch over the cap is not named: %s", body)
+	}
+	if !strings.Contains(body, "59959") {
+		t.Error("the measured count is not shown")
+	}
+	if !strings.Contains(body, "pmin") || !strings.Contains(body, "pmax") {
+		t.Error("the two parameters that narrow it are not named")
+	}
+	// And it says the product will not do it for them, which is a decision
+	// rather than a limitation.
+	if !strings.Contains(body, "не сузит") {
+		t.Error("the screen does not say the product will not narrow it")
+	}
+}
+
+// TestANarrowWatchIsSaidNothingAbout.
+func TestANarrowWatchIsSaidNothingAbout(t *testing.T) {
+	s := newServer(t)
+	aWatch(t, s, "узкое")
+	if strings.Contains(get(t, s, "/").Body.String(), "слишком широкое") {
+		t.Error("a narrow watch was warned about")
+	}
+}
+
+// TestThePageCapAgreesWithTheSchema.
+//
+// This screen said ten and the column is CHECK-constrained to two, so anybody
+// who typed three got a raw constraint failure naming a table instead of a
+// refusal naming the mistake — the exact thing SetTransportMode's comment says
+// must not happen.
+func TestThePageCapAgreesWithTheSchema(t *testing.T) {
+	if maxPagesPerPass != 2 {
+		t.Fatalf("maxPagesPerPass = %d; watches.max_pages is CHECK(1..2)",
+			maxPagesPerPass)
+	}
+	s := newServer(t)
+	form := addWatchForm("наблюдение", "https://m.avito.ru/all?q=x", 300)
+	form.Set("pages", "3")
+
+	rec := post(t, s, "/watches", form)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("= %d; three pages was accepted", rec.Code)
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, "CHECK") || strings.Contains(body, "constraint") {
+		t.Errorf("the refusal is a database error: %s", body)
+	}
+	if !strings.Contains(body, "страниц") {
+		t.Errorf("the refusal does not name the mistake: %s", body)
+	}
+}
+
+// TestTheScreenSaysWhyTwoPages, because a limit with no reason reads as
+// timidity and gets raised by the first person who wants more.
+func TestTheScreenSaysWhyTwoPages(t *testing.T) {
+	if !strings.Contains(get(t, newServer(t), "/").Body.String(), "429 в 403") {
+		t.Error("the page limit is stated without its reason")
+	}
+}
+
+// TestTheHaltBannerCarriesMarkerUrlAndWhen.
+//
+// A halt is a state and not an incident, which is why it is a banner rather
+// than a toast — and a state is described by how long it has lasted as much as
+// by what it is. «Остановлено» tells somebody to look; «остановлено во вторник»
+// tells them whether to hurry.
+func TestTheHaltBannerCarriesMarkerUrlAndWhen(t *testing.T) {
+	s := newServer(t)
+	ctx := context.Background()
+	id := aWatch(t, s, "наблюдение")
+	if err := s.Store.MarkHalted(ctx, id, "geetest", s.now().Unix()-7200); err != nil {
+		t.Fatal(err)
+	}
+
+	// Any screen, because a banner is above everything.
+	body := get(t, s, "/health").Body.String()
+	if !strings.Contains(body, "geetest") {
+		t.Error("the banner does not carry the marker")
+	}
+	if !strings.Contains(body, "avito.ru") {
+		t.Errorf("the banner does not carry the URL: %s", body)
+	}
+	if !strings.Contains(body, "назад") {
+		t.Error("the banner does not say how long it has been stopped")
+	}
+}
+
+// TestTheScreenAndTheCollectorAgreeOnWhatAUrlIs.
+//
+// This screen accepted any *.avito.ru host while avito.ParseSearch accepts
+// three, so a watch could save cleanly and then fail on every pass — no refusal
+// at first, then silence, which is the worst shape a refusal can take.
+func TestTheScreenAndTheCollectorAgreeOnWhatAUrlIs(t *testing.T) {
+	s := newServer(t)
+	for _, bad := range []string{
+		"https://avito.ru.example.com/all?q=x",
+		"https://jobs.avito.ru/all?q=x",
+		"https://example.com/all?q=x",
+		"не ссылка",
+	} {
+		form := addWatchForm("наблюдение", bad, 300)
+		rec := post(t, s, "/watches", form)
+		if rec.Code != http.StatusOK {
+			t.Errorf("%q was accepted (= %d)", bad, rec.Code)
+			continue
+		}
+		if !strings.Contains(rec.Body.String(), "ссылк") {
+			t.Errorf("%q: the refusal does not name the mistake", bad)
+		}
+	}
+	// And what the collector accepts, the screen accepts.
+	for _, good := range []string{
+		"https://m.avito.ru/moskva/telefony?q=x",
+		"https://www.avito.ru/moskva/telefony?q=x",
+		"https://avito.ru/all?q=x",
+	} {
+		if err := checkSearchURL(good); err != nil {
+			t.Errorf("%q was refused: %v", good, err)
+		}
+	}
+}

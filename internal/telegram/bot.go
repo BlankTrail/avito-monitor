@@ -114,7 +114,29 @@ func (b *Bot) SendMessage(ctx context.Context, chat, text string) error {
 // that knows what a Telegram address looks like; notify deliberately never
 // looks inside one.
 func (b *Bot) Send(ctx context.Context, m notify.Message) error {
-	return b.SendMessage(ctx, m.Address, m.Body)
+	a, ok := DecodeAttachment(m.Attachment)
+	if !ok {
+		return b.SendMessage(ctx, m.Address, m.Body)
+	}
+	return b.SendMessageWithButton(ctx, m.Address, m.Body, a)
+}
+
+// SendMessageWithButton is SendMessage plus one inline button.
+//
+// A failure to build the markup sends the message without it rather than
+// failing: a notification that did not arrive because a button could not be
+// drawn is the worst possible trade, and it is the same reasoning that keeps
+// this message plain text.
+func (b *Bot) SendMessageWithButton(ctx context.Context, chat, text string, a Attachment) error {
+	markup, err := markupFor(a)
+	if err != nil {
+		return b.SendMessage(ctx, chat, text)
+	}
+	form := url.Values{}
+	form.Set("chat_id", chat)
+	form.Set("text", truncate(text))
+	form.Set("reply_markup", markup)
+	return b.call(ctx, "sendMessage", strings.NewReader(form.Encode()), nil)
 }
 
 func (b *Bot) call(ctx context.Context, method string, body io.Reader, out any) error {

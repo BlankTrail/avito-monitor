@@ -20,8 +20,15 @@ import (
 // schema; inventing half of that parser here would be two parsers to keep in
 // step with each other.
 func watchCmd(args []string) error {
-	if len(args) == 0 || args[0] != "add" {
-		return errors.New("usage: avitomon watch add [flags] <url>")
+	if len(args) == 0 {
+		return errors.New("usage: avitomon watch add|resume")
+	}
+	if args[0] == "resume" {
+		return watchResumeCmd(args[1:])
+	}
+	if args[0] != "add" {
+		return errors.New("usage: avitomon watch add [flags] <url> | " +
+			"avitomon watch resume <id>|--all")
 	}
 	fs := flag.NewFlagSet("watch add", flag.ExitOnError)
 	dbPath := fs.String("db", "avito.db", "database file")

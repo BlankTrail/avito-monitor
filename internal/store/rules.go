@@ -367,7 +367,12 @@ type DueMessage struct {
 	Address  string
 	Kind     string
 	Body     string
-	Attempts int
+	// Attachment is opaque here and to internal/notify: it is whatever the
+	// transport that will deliver this message put there. The column has
+	// existed since migration 0001 and nothing read it until the inline
+	// button.
+	Attachment string
+	Attempts   int
 }
 
 // DueMessages is the worker's only question: what is pending, ready, and has
@@ -382,7 +387,7 @@ func (s *Store) DueMessages(ctx context.Context, now int64, limit int) ([]DueMes
 		limit = 100
 	}
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT o.id, o.target_id, t.address, t.kind, o.body, o.attempts
+		SELECT o.id, o.target_id, t.address, t.kind, o.body, o.attachment, o.attempts
 		FROM notify_outbox o
 		JOIN notify_targets t ON t.id = o.target_id
 		WHERE o.state = 'pending' AND o.due_at <= ? AND t.enabled = 1
@@ -396,8 +401,8 @@ func (s *Store) DueMessages(ctx context.Context, now int64, limit int) ([]DueMes
 	var out []DueMessage
 	for rows.Next() {
 		var m DueMessage
-		if err := rows.Scan(&m.ID, &m.TargetID, &m.Address, &m.Kind,
-			&m.Body, &m.Attempts); err != nil {
+		if err := rows.Scan(&m.ID, &m.TargetID, &m.Address, &m.Kind, &m.Body,
+			&m.Attachment, &m.Attempts); err != nil {
 			return nil, fmt.Errorf("store: due messages: %w", err)
 		}
 		out = append(out, m)

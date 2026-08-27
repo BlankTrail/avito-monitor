@@ -21,6 +21,11 @@ type Message struct {
 	Address  string
 	Kind     string
 	Body     string
+	// Attachment is opaque to this package, which is the point: notify never
+	// looks inside an address and it must not start looking inside a payload
+	// either. Whatever put the message in the outbox and whatever takes it out
+	// agree on the format between themselves.
+	Attachment string
 }
 
 // Transport is somewhere a message can go.
@@ -84,6 +89,7 @@ func (w *Worker) Run(ctx context.Context) (Stats, error) {
 		}
 		sendErr := w.Transport.Send(ctx, Message{
 			TargetID: m.TargetID, Address: m.Address, Kind: m.Kind, Body: m.Body,
+			Attachment: m.Attachment,
 		})
 		if sendErr == nil {
 			if err := w.Store.MarkSent(ctx, m.ID, now); err != nil {

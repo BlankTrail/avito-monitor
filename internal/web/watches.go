@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"net/url"
 	"strconv"
 	"strings"
 
@@ -30,10 +29,17 @@ const minIntervalSec = 120
 
 // maxPagesPerPass bounds what one watch may ask for in one pass.
 //
-// Not a technical limit: it is the number above which a single watch can eat a
-// whole address's budget in one tick, and the person who typed it would learn
-// that as a ban rather than as a refusal.
-const maxPagesPerPass = 10
+// Two, which is what watches.max_pages is CHECK-constrained to. This screen
+// said ten, and the two disagreeing meant somebody typing three got a raw
+// constraint failure naming a table instead of a refusal naming the mistake.
+//
+// The number is two for a measured reason and not a cautious one: walking past
+// the first page or two is the loudest escalation trigger on this target — it
+// is what turns a 429 into a 403, and a 403 costs the cookie jar and therefore
+// the whole clearance the jar was carrying. The schema's own comment says it is
+// a constraint rather than a default precisely because the failure mode is
+// somebody raising it «just for this one query».
+const maxPagesPerPass = 2
 
 func (s *Server) watchesPage(w http.ResponseWriter, r *http.Request) {
 	// The default surface follows the transport, because the two surfaces do
@@ -147,6 +153,44 @@ func (s *Server) paceWarnings(ctx context.Context, watches []store.Watch) string
 	return b.String()
 }
 
+// tooBroadWarnings names the watches whose query is wider than this product can
+// see the shape of.
+//
+// Avito pages through at most five thousand results, so above that a
+// date-sorted page one is a window onto something whose size is unknowable from
+// here — «new listing» stops being a set difference and becomes a guess about
+// the top of a firehose.
+//
+// It names pmin and pmax rather than saying «narrow it». Those are the two
+// parameters that actually narrow an Avito search without changing what is
+// being watched, and a person who has to go and find that out is a person who
+// narrows it by deleting the watch.
+//
+// Nothing slices automatically. A monitor that multiplies its own request
+// budget without being asked is a monitor that earns a 403.
+func tooBroadWarnings(watches []store.Watch) string {
+	var b strings.Builder
+	for _, w := range watches {
+		if !w.TooBroad || !w.Enabled {
+			continue
+		}
+		count := "больше пяти тысяч"
+		if w.LastTotalCount != nil {
+			count = fmt.Sprintf("%d", *w.LastTotalCount)
+		}
+		fmt.Fprintf(&b, `<div class="card">%s</div>`, note("warning", fmt.Sprintf(
+			"Наблюдение «%s» слишком широкое: под запрос попадает %s "+
+				"объявлений, а Авито отдаёт не больше пяти тысяч. Первая "+
+				"страница такого запроса — это верхушка потока, и «новое "+
+				"объявление» перестаёт быть надёжным. Сузьте запрос ценой: "+
+				"добавьте в ссылку pmin и pmax — например pmin=20000&pmax=60000. "+
+				"Сам продукт запрос не сузит: монитор, который без спроса "+
+				"умножает себе бюджет запросов, зарабатывает блокировку.",
+			w.Name, count)))
+	}
+	return b.String()
+}
+
 // surfaceAdvice is which surface this installation can actually use.
 //
 // Measured on live Avito, 25 August 2026, from one machine within minutes:
@@ -212,6 +256,7 @@ func (s *Server) renderWatches(w http.ResponseWriter, r *http.Request, problem s
 	}
 	body.WriteString(s.collectionState(ctx, watches))
 	body.WriteString(s.paceWarnings(ctx, watches))
+	body.WriteString(tooBroadWarnings(watches))
 
 	if problem != "" {
 		body.WriteString(`<div class="card">` + note("bad", problem) + `</div>`)
@@ -248,8 +293,18 @@ func (s *Server) watchTable(ctx context.Context, watches []store.Watch) string {
 		state := `<span class="pill ok">идёт</span>`
 		switch {
 		case w.State == "halted":
-			state = fmt.Sprintf(`<span class="pill bad">остановлено: %s</span>`,
-				esc(w.HaltedReason))
+			// The reason, and the way out. A halt is the only state this
+			// program will not leave on its own — «halted_reason is never
+			// cleared by the program» — so the row that shows it has to carry
+			// the button, or the exit is a command line somebody has to find.
+			state = fmt.Sprintf(`<span class="pill bad">остановлено: %s</span>`+
+				`<form method="post" action="/watches/resume" `+
+				`data-confirm="Возобновить? Ничего не проверяется: если стена `+
+				`на месте, следующий проход снова остановится — это один `+
+				`запрос и честный ответ.">`+
+				`<input type="hidden" name="id" value="%d">`+
+				`<button class="btn" type="submit">Возобновить</button></form>`,
+				esc(w.HaltedReason), w.ID)
 		case !w.Enabled:
 			state = `<span class="pill warn">выключено</span>`
 		case w.SeededAt == nil:
@@ -298,7 +353,10 @@ func watchForm(d store.Watch, mode transport.Mode) string {
 			"так что запросы тратятся впустую.", minIntervalSec)))
 	b.WriteString(field("Страниц за проход", "pages",
 		strconv.Itoa(d.MaxPages), "number",
-		fmt.Sprintf("Один запрос на страницу. Не больше %d.", maxPagesPerPass)))
+		fmt.Sprintf("Один запрос на страницу. Не больше %d: заход дальше "+
+			"второй страницы — самый громкий сигнал для площадки, "+
+			"он превращает 429 в 403, а 403 стоит уже всего пропуска.",
+			maxPagesPerPass)))
 	// The two surfaces, and the honest state of both.
 	//
 	// The label once said mobile carried more cards. It carries thirty against
@@ -507,21 +565,17 @@ func watchFromForm(r *http.Request) (store.Watch, error) {
 // site would spend a pass and a pacing slot to arrive at a page the extractor
 // cannot read, and report it as a collection failure.
 func checkSearchURL(raw string) error {
-	if raw == "" {
+	if strings.TrimSpace(raw) == "" {
 		return errors.New("не задана ссылка")
 	}
-	u, err := url.Parse(raw)
-	if err != nil {
-		return errors.New("ссылку не удалось разобрать")
-	}
-	if u.Scheme != "http" && u.Scheme != "https" {
-		return errors.New("ссылка должна начинаться с http:// или https://")
-	}
-	host := strings.ToLower(u.Hostname())
-	// The suffix check carries its dot deliberately: without it
-	// «avito.ru.example.com» ends in «avito.ru» and would be accepted.
-	if host != "avito.ru" && !strings.HasSuffix(host, ".avito.ru") {
-		return errors.New("это не ссылка на avito.ru")
+	// Checked by the same function that will build the URL to fetch, and that
+	// is the point. This screen used to accept any *.avito.ru host while
+	// avito.ParseSearch accepts three — so a watch could save cleanly here and
+	// fail on every pass afterwards, which is the worst shape a refusal can
+	// take: no refusal at all, then silence.
+	if _, err := avito.ParseSearch(raw); err != nil {
+		return errors.New("это не похоже на ссылку поиска Авито: " +
+			"скопируйте её из адресной строки со страницы выдачи")
 	}
 	return nil
 }
@@ -559,4 +613,21 @@ func (s *Server) addressCount(ctx context.Context) (int, error) {
 		return 1, nil
 	}
 	return total, nil
+}
+
+// resumeWatch clears a halt from the panel.
+//
+// The same act as «avitomon watch resume» and deliberately the same store call:
+// two spellings of one correction is how they drift apart.
+func (s *Server) resumeWatch(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.FormValue("id"), 10, 64)
+	if err != nil || id <= 0 {
+		http.Error(w, "нет такого наблюдения", http.StatusBadRequest)
+		return
+	}
+	if _, err := s.Store.ResumeWatch(r.Context(), id, s.now().Unix()); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	http.Redirect(w, r, "/", http.StatusSeeOther)
 }

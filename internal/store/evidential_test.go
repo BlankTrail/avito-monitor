@@ -6,6 +6,8 @@ import (
 	"context"
 	"strings"
 	"testing"
+
+	"github.com/BlankTrail/avito-monitor/avito"
 )
 
 // evidentialOf reads the stored column, which is what every later query about
@@ -199,3 +201,81 @@ func TestOnlyAnEvidentialPassMovesLastTotalCount(t *testing.T) {
 }
 
 func ptrInt64(v int64) *int64 { return &v }
+
+// TestAWatchOverTheCapIsFlagged.
+//
+// Avito pages through at most five thousand results. Above that, page one is
+// the top of a firehose and «new listing» is a guess rather than a set
+// difference — so the watch is flagged and the panel says to add a price band.
+func TestAWatchOverTheCapIsFlagged(t *testing.T) {
+	s := openTemp(t)
+	ctx := context.Background()
+	id := addTestWatch(t, s, "всё подряд", 300)
+
+	huge := int64(59959)
+	p := Pass{
+		WatchID: id, StartedAt: 1000, FinishedAt: 1001, Page: 1,
+		Surface: avito.SurfaceMobile, Class: "ok", Path: "dom", Mode: "direct",
+		TotalCount: &huge,
+	}
+	if _, err := s.SavePass(ctx, p, listingsFor(100)); err != nil {
+		t.Fatal(err)
+	}
+	w, err := s.Watch(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !w.TooBroad {
+		t.Error("a watch over the cap was not flagged")
+	}
+}
+
+// TestAMissingCountNeverFlagsAnything.
+//
+// The column is NULL when a surface reported no count at all, and a missing
+// number must never become arithmetic on zero — the same rule the collapse test
+// keeps.
+func TestAMissingCountNeverFlagsAnything(t *testing.T) {
+	s := openTemp(t)
+	ctx := context.Background()
+	id := addTestWatch(t, s, "наблюдение", 300)
+
+	p := Pass{
+		WatchID: id, StartedAt: 1000, FinishedAt: 1001, Page: 1,
+		Surface: avito.SurfaceMobile, Class: "ok", Path: "dom", Mode: "direct",
+	}
+	if _, err := s.SavePass(ctx, p, listingsFor(100)); err != nil {
+		t.Fatal(err)
+	}
+	w, err := s.Watch(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w.TooBroad {
+		t.Error("a pass with no count flagged the watch")
+	}
+}
+
+// TestANarrowWatchStaysUnflagged.
+func TestANarrowWatchStaysUnflagged(t *testing.T) {
+	s := openTemp(t)
+	ctx := context.Background()
+	id := addTestWatch(t, s, "узкое", 300)
+
+	small := int64(120)
+	p := Pass{
+		WatchID: id, StartedAt: 1000, FinishedAt: 1001, Page: 1,
+		Surface: avito.SurfaceMobile, Class: "ok", Path: "dom", Mode: "direct",
+		TotalCount: &small,
+	}
+	if _, err := s.SavePass(ctx, p, listingsFor(100)); err != nil {
+		t.Fatal(err)
+	}
+	w, err := s.Watch(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w.TooBroad {
+		t.Error("a narrow watch was flagged")
+	}
+}

@@ -154,3 +154,128 @@ func TestSetNextDueMovesTheWatchForward(t *testing.T) {
 		t.Error("the watch never came due again")
 	}
 }
+
+// TestResumingClearsTheHaltAndPromisesNothing.
+//
+// A person's act and never the program's: a monitor that decides on its own
+// that a wall has gone away is a monitor that resumes into it all night. This
+// re-tests nothing — if the wall is still there the next pass halts again with
+// a fresh reason, which costs one request and buys a truthful answer.
+func TestResumingClearsTheHaltAndPromisesNothing(t *testing.T) {
+	s := openTemp(t)
+	ctx := context.Background()
+	id := addTestWatch(t, s, "наблюдение", 300)
+	if err := s.MarkHalted(ctx, id, "geetest", 1500); err != nil {
+		t.Fatal(err)
+	}
+
+	ok, err := s.ResumeWatch(ctx, id, 2000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Fatal("a halted watch reported nothing to resume")
+	}
+	w, err := s.Watch(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w.State != "idle" || w.HaltedReason != "" {
+		t.Errorf("watch = %q / %q", w.State, w.HaltedReason)
+	}
+	if w.NextDueAt != 2000 {
+		t.Errorf("next_due_at = %d, want now", w.NextDueAt)
+	}
+}
+
+// TestAResumptionIsRecordedButNeverSent.
+//
+// An un-halt that sent «your install is blocked» through the global rule would
+// be a lie in the one message that has to be trustworthy — so the row is
+// written with the reason it cleared and marked backfill, which is what makes
+// the notifier skip it.
+func TestAResumptionIsRecordedButNeverSent(t *testing.T) {
+	s := openTemp(t)
+	ctx := context.Background()
+	id := addTestWatch(t, s, "наблюдение", 300)
+	if err := s.MarkHalted(ctx, id, "доступ ограничен", 1500); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.ResumeWatch(ctx, id, 2000); err != nil {
+		t.Fatal(err)
+	}
+	changes, err := s.Changes(ctx, id, 0, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Two: the halt said so, and the resumption says it was cleared. The halt
+	// is meant to be sent and the resumption is not.
+	if len(changes) != 2 {
+		t.Fatalf("%d changes", len(changes))
+	}
+	var halt, resumed ChangeRow
+	for _, c := range changes {
+		if c.Backfill {
+			resumed = c
+		} else {
+			halt = c
+		}
+	}
+	if halt.Now != "доступ ограничен" {
+		t.Errorf("the halt did not carry its reason: %q", halt.Now)
+	}
+	if halt.Backfill {
+		t.Error("the halt was marked backfill; nobody would be told")
+	}
+	if resumed.Was != "доступ ограничен" {
+		t.Errorf("the cleared reason was lost: %q", resumed.Was)
+	}
+	if !resumed.Backfill {
+		t.Error("the resumption was not marked backfill; the notifier would send it")
+	}
+}
+
+// TestResumingAWatchThatIsNotHaltedIsNotAnError.
+//
+// «Возобновить всё» over a list where one has already recovered must not fail
+// on it.
+func TestResumingAWatchThatIsNotHaltedIsNotAnError(t *testing.T) {
+	s := openTemp(t)
+	ctx := context.Background()
+	id := addTestWatch(t, s, "наблюдение", 300)
+
+	ok, err := s.ResumeWatch(ctx, id, 2000)
+	if err != nil {
+		t.Fatalf("resuming a healthy watch failed: %v", err)
+	}
+	if ok {
+		t.Error("a healthy watch reported that it was resumed")
+	}
+	if n := countRows(t, s, `SELECT count(*) FROM changes`); n != 0 {
+		t.Errorf("%d changes written for a watch that was not halted", n)
+	}
+}
+
+// TestHittingTheSameWallTwiceSaysSoOnce.
+//
+// A wall is hit on every pass. Writing a change per pass would leave the rule's
+// six-hour floor suppressing a flood instead of describing a state — and the
+// suppression log would then be the flood.
+func TestHittingTheSameWallTwiceSaysSoOnce(t *testing.T) {
+	s := openTemp(t)
+	ctx := context.Background()
+	id := addTestWatch(t, s, "наблюдение", 300)
+
+	for _, at := range []int64{1500, 1800, 2100} {
+		if err := s.MarkHalted(ctx, id, "geetest", at); err != nil {
+			t.Fatal(err)
+		}
+	}
+	changes, err := s.Changes(ctx, id, 0, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(changes) != 1 {
+		t.Errorf("%d changes for one wall hit three times", len(changes))
+	}
+}

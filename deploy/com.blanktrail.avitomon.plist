@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later
+
+     A launchd DAEMON, for Macs nobody logs into.
+
+     internal/autostart writes a LaunchAgent, which is the right thing on a
+     laptop: it runs as the person, in their session, and needs no root. This
+     is the other case, and it is a file an administrator installs rather than
+     something the program writes.
+
+       sudo install -m644 com.blanktrail.avitomon.plist /Library/LaunchDaemons/
+       sudo launchctl load -w /Library/LaunchDaemons/com.blanktrail.avitomon.plist
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.blanktrail.avitomon</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/local/bin/avitomon</string>
+    <string>panel</string>
+    <string>-db</string>
+    <string>/usr/local/var/avitomon/avito.db</string>
+    <string>-port</string>
+    <string>8765</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>/usr/local/var/avitomon</string>
+
+  <!-- Restarted if it dies, and it is not supposed to die: every long-lived
+       goroutine is supervised and a panic is a row rather than an exit. -->
+  <key>KeepAlive</key>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+  </dict>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <!-- Its own user. The program needs one directory and the network. -->
+  <key>UserName</key>
+  <string>_avitomon</string>
+
+  <key>StandardOutPath</key>
+  <string>/usr/local/var/log/avitomon.log</string>
+  <key>StandardErrorPath</key>
+  <string>/usr/local/var/log/avitomon.log</string>
+</dict>
+</plist>

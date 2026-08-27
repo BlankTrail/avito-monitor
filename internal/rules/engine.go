@@ -34,6 +34,16 @@ type Engine struct {
 	// than silence.
 	Summarise func(r Rule, firings []Firing) string
 
+	// Attach is whatever the transport wants to carry beside the text — the
+	// inline button on a repost message, today. Opaque here for the same
+	// reason Render is a field: the engine's job ends at «this should be
+	// sent», and a package that decided what a button says would be a package
+	// that knows what Telegram is.
+	//
+	// Nil, or a return of "", means a plain message. That is every message but
+	// one kind, so the absence has to be the cheap path.
+	Attach func(store.ChangeRow) string
+
 	// Now is the clock. Nil falls back to time.Now.
 	Now func() time.Time
 
@@ -80,7 +90,7 @@ func (e *Engine) Apply(ctx context.Context, all []Rule, ev Event) (int, error) {
 			e.hold(r, ev, eventID)
 			continue
 		}
-		n, err := e.queue(ctx, r, e.render(ev.Change), &eventID)
+		n, err := e.queue(ctx, r, e.render(ev.Change), e.attach(ev.Change), &eventID)
 		if err != nil {
 			return queued, err
 		}
@@ -116,7 +126,10 @@ func (e *Engine) Flush(ctx context.Context) (int, error) {
 			continue
 		}
 		r := firings[0].Rule
-		n, err := e.queue(ctx, r, e.summarise(r, firings), nil)
+		n, err := // A summary carries no button. It is the outcome of many decisions,
+			// and a button on it could only name one of them — which is the same
+			// reason its rule_event_id is nil.
+			e.queue(ctx, r, e.summarise(r, firings), "", nil)
 		if err != nil {
 			return queued, err
 		}
@@ -133,7 +146,7 @@ func (e *Engine) Flush(ctx context.Context) (int, error) {
 // forty would make the other thirty-nine look as though nothing was sent about
 // them. The rule_events rows all exist, all carry the rule id, and all sit in
 // the same minute; the panel finds them that way.
-func (e *Engine) queue(ctx context.Context, r Rule, body string, eventID *int64) (int, error) {
+func (e *Engine) queue(ctx context.Context, r Rule, body, attachment string, eventID *int64) (int, error) {
 	targets, err := e.targetsFor(ctx, r)
 	if err != nil {
 		return 0, err
@@ -143,13 +156,21 @@ func (e *Engine) queue(ctx context.Context, r Rule, body string, eventID *int64)
 		at := e.now().Unix()
 		if err := e.Store.Enqueue(ctx, store.OutboxRow{
 			TargetID: target, RuleEventID: eventID,
-			CreatedAt: at, DueAt: at, Body: body,
+			CreatedAt: at, DueAt: at, Body: body, Attachment: attachment,
 		}); err != nil {
 			return queued, fmt.Errorf("rules: queue message: %w", err)
 		}
 		queued++
 	}
 	return queued, nil
+}
+
+// attach is the transport's payload for one change, or "" when there is none.
+func (e *Engine) attach(c store.ChangeRow) string {
+	if e.Attach == nil {
+		return ""
+	}
+	return e.Attach(c)
 }
 
 // summarise falls back to the first firing with a count in front of it.
