@@ -30,10 +30,17 @@ const minIntervalSec = 120
 
 // maxPagesPerPass bounds what one watch may ask for in one pass.
 //
-// Not a technical limit: it is the number above which a single watch can eat a
-// whole address's budget in one tick, and the person who typed it would learn
-// that as a ban rather than as a refusal.
-const maxPagesPerPass = 10
+// Two, which is what watches.max_pages is CHECK-constrained to. This screen
+// said ten, and the two disagreeing meant somebody typing three got a raw
+// constraint failure naming a table instead of a refusal naming the mistake.
+//
+// The number is two for a measured reason and not a cautious one: walking past
+// the first page or two is the loudest escalation trigger on this target — it
+// is what turns a 429 into a 403, and a 403 costs the cookie jar and therefore
+// the whole clearance the jar was carrying. The schema's own comment says it is
+// a constraint rather than a default precisely because the failure mode is
+// somebody raising it «just for this one query».
+const maxPagesPerPass = 2
 
 func (s *Server) watchesPage(w http.ResponseWriter, r *http.Request) {
 	// The default surface follows the transport, because the two surfaces do
@@ -347,7 +354,10 @@ func watchForm(d store.Watch, mode transport.Mode) string {
 			"так что запросы тратятся впустую.", minIntervalSec)))
 	b.WriteString(field("Страниц за проход", "pages",
 		strconv.Itoa(d.MaxPages), "number",
-		fmt.Sprintf("Один запрос на страницу. Не больше %d.", maxPagesPerPass)))
+		fmt.Sprintf("Один запрос на страницу. Не больше %d: заход дальше "+
+			"второй страницы — самый громкий сигнал для площадки, "+
+			"он превращает 429 в 403, а 403 стоит уже всего пропуска.",
+			maxPagesPerPass)))
 	// The two surfaces, and the honest state of both.
 	//
 	// The label once said mobile carried more cards. It carries thirty against

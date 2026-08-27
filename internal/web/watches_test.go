@@ -539,3 +539,66 @@ func TestANarrowWatchIsSaidNothingAbout(t *testing.T) {
 		t.Error("a narrow watch was warned about")
 	}
 }
+
+// TestThePageCapAgreesWithTheSchema.
+//
+// This screen said ten and the column is CHECK-constrained to two, so anybody
+// who typed three got a raw constraint failure naming a table instead of a
+// refusal naming the mistake — the exact thing SetTransportMode's comment says
+// must not happen.
+func TestThePageCapAgreesWithTheSchema(t *testing.T) {
+	if maxPagesPerPass != 2 {
+		t.Fatalf("maxPagesPerPass = %d; watches.max_pages is CHECK(1..2)",
+			maxPagesPerPass)
+	}
+	s := newServer(t)
+	form := addWatchForm("наблюдение", "https://m.avito.ru/all?q=x", 300)
+	form.Set("pages", "3")
+
+	rec := post(t, s, "/watches", form)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("= %d; three pages was accepted", rec.Code)
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, "CHECK") || strings.Contains(body, "constraint") {
+		t.Errorf("the refusal is a database error: %s", body)
+	}
+	if !strings.Contains(body, "страниц") {
+		t.Errorf("the refusal does not name the mistake: %s", body)
+	}
+}
+
+// TestTheScreenSaysWhyTwoPages, because a limit with no reason reads as
+// timidity and gets raised by the first person who wants more.
+func TestTheScreenSaysWhyTwoPages(t *testing.T) {
+	if !strings.Contains(get(t, newServer(t), "/").Body.String(), "429 в 403") {
+		t.Error("the page limit is stated without its reason")
+	}
+}
+
+// TestTheHaltBannerCarriesMarkerUrlAndWhen.
+//
+// A halt is a state and not an incident, which is why it is a banner rather
+// than a toast — and a state is described by how long it has lasted as much as
+// by what it is. «Остановлено» tells somebody to look; «остановлено во вторник»
+// tells them whether to hurry.
+func TestTheHaltBannerCarriesMarkerUrlAndWhen(t *testing.T) {
+	s := newServer(t)
+	ctx := context.Background()
+	id := aWatch(t, s, "наблюдение")
+	if err := s.Store.MarkHalted(ctx, id, "geetest", s.now().Unix()-7200); err != nil {
+		t.Fatal(err)
+	}
+
+	// Any screen, because a banner is above everything.
+	body := get(t, s, "/health").Body.String()
+	if !strings.Contains(body, "geetest") {
+		t.Error("the banner does not carry the marker")
+	}
+	if !strings.Contains(body, "avito.ru") {
+		t.Errorf("the banner does not carry the URL: %s", body)
+	}
+	if !strings.Contains(body, "назад") {
+		t.Error("the banner does not say how long it has been stopped")
+	}
+}

@@ -348,9 +348,19 @@ func (s *Server) banner(ctx context.Context) string {
 			if w.State != "halted" {
 				continue
 			}
+			// The marker, the address and the moment — a state and not an
+			// incident, so it says how long as well as what. «Остановлено»
+			// alone tells somebody to look; «остановлено во вторник» tells
+			// them whether to hurry.
+			since := ""
+			if w.HaltedAt != nil {
+				since = " — " + ago(*w.HaltedAt, s.now().Unix())
+			}
 			fmt.Fprintf(&b,
-				`<div class="banner bad">Наблюдение «%s» остановлено: %s</div>`,
-				esc(w.Name), esc(w.HaltedReason))
+				`<div class="banner bad">Наблюдение «%s» остановлено: %s%s<br>`+
+					`<span class="hint">%s</span> · `+
+					`<a href="/">снять остановку</a></div>`,
+				esc(w.Name), esc(w.HaltedReason), esc(since), esc(w.URL))
 		}
 	}
 	if err := s.Store.CheckSpace(ctx); err != nil {
