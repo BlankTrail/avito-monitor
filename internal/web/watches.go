@@ -106,6 +106,47 @@ func (s *Server) collectionState(ctx context.Context, watches []store.Watch) str
 		"Сбор идёт: последний проход %s.", ago(last, s.now().Unix()))) + `</div>`
 }
 
+// paceWarnings names the watches whose passes take longer than their interval.
+//
+// Measured on 25 August 2026: a mobile pass in direct mode takes two or three
+// seconds against a 120-second interval, and a desktop pass through BlankTrail
+// took seven minutes and forty-one seconds against 300. The second is a watch
+// that physically cannot keep its own schedule — the next pass falls due before
+// the previous one ends.
+//
+// The scheduler does not know this and the budget line cannot tell: that
+// arithmetic counts requests and not seconds. What such a watch actually does
+// is get read less often than its own row claims, and nothing anywhere said so.
+//
+// This says so and does nothing else. What a watch SHOULD do when it cannot
+// keep up — stretch its interval, skip ticks quietly, or carry on and be
+// honest about it — has at least three defensible answers, and choosing one
+// inside a scheduler is choosing it by accident. Naming the fact is the part
+// that needs no decision.
+func (s *Server) paceWarnings(ctx context.Context, watches []store.Watch) string {
+	var b strings.Builder
+	for _, w := range watches {
+		if !w.Enabled || w.State == "halted" || w.IntervalSec <= 0 {
+			continue
+		}
+		pace, err := s.Store.PaceOf(ctx, w.ID)
+		if err != nil || !pace.Enough {
+			continue
+		}
+		if pace.MedianSec <= int64(w.IntervalSec) {
+			continue
+		}
+		fmt.Fprintf(&b, `<div class="card">%s</div>`, note("warning", fmt.Sprintf(
+			"Наблюдение «%s» не успевает за своим интервалом: проход занимает "+
+				"около %d с, а опрашивать его положено раз в %d с. На деле оно "+
+				"опрашивается реже — примерно раз в %d с. Поставьте интервал "+
+				"побольше, уменьшите число страниц или переведите его на "+
+				"мобильную выдачу: она стоит один запрос вместо двух.",
+			w.Name, pace.MedianSec, w.IntervalSec, pace.MedianSec)))
+	}
+	return b.String()
+}
+
 // surfaceAdvice is which surface this installation can actually use.
 //
 // Measured on live Avito, 25 August 2026, from one machine within minutes:
@@ -170,6 +211,7 @@ func (s *Server) renderWatches(w http.ResponseWriter, r *http.Request, problem s
 		body.WriteString(s.watchTable(ctx, watches))
 	}
 	body.WriteString(s.collectionState(ctx, watches))
+	body.WriteString(s.paceWarnings(ctx, watches))
 
 	if problem != "" {
 		body.WriteString(`<div class="card">` + note("bad", problem) + `</div>`)

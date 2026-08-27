@@ -192,3 +192,59 @@ func (s *Store) cardYield(ctx context.Context, watchID int64) (float64, bool, er
 	}
 	return float64(newest) / median, true, nil
 }
+
+// passDurationWindow is how many recent passes a duration verdict rests on.
+//
+// Five, and fewer than cardYieldWindow's ten on purpose: a watch that cannot
+// keep its schedule is a fact about the transport, which does not drift the way
+// a result set does, and waiting for ten passes at seven minutes each means
+// waiting most of an hour to be told something the second pass already showed.
+const passDurationWindow = 5
+
+// WatchPace is how long a watch's passes take against how often it is supposed
+// to run.
+type WatchPace struct {
+	MedianSec int64
+	// Enough is false until there are passDurationWindow readings. Below that
+	// the median is one slow start being mistaken for a pattern.
+	Enough bool
+}
+
+// PaceOf is the median duration of a watch's recent successful passes.
+//
+// Median and not mean, the same choice cardYield makes: one pass that spent
+// four minutes waiting out a refusal is the ordinary shape of this data, and a
+// mean would let it decide the verdict for the other four.
+//
+// Only 'ok' passes. A pass that halted returned in milliseconds and says
+// nothing about how long reading actually takes.
+func (s *Store) PaceOf(ctx context.Context, watchID int64) (WatchPace, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT elapsed_ms FROM passes
+		WHERE watch_id = ? AND class = 'ok'
+		ORDER BY id DESC LIMIT ?`, watchID, passDurationWindow)
+	if err != nil {
+		return WatchPace{}, fmt.Errorf("store: pace: %w", err)
+	}
+	defer rows.Close()
+
+	var took []int64
+	for rows.Next() {
+		var ms int64
+		if err := rows.Scan(&ms); err != nil {
+			return WatchPace{}, fmt.Errorf("store: pace: %w", err)
+		}
+		took = append(took, ms)
+	}
+	if err := rows.Err(); err != nil {
+		return WatchPace{}, fmt.Errorf("store: pace: %w", err)
+	}
+	if len(took) < passDurationWindow {
+		return WatchPace{}, nil
+	}
+	sort.Slice(took, func(i, j int) bool { return took[i] < took[j] })
+	return WatchPace{
+		MedianSec: took[len(took)/2] / 1000,
+		Enough:    true,
+	}, nil
+}
