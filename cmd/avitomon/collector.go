@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/BlankTrail/avito-monitor/avito"
 	"github.com/BlankTrail/avito-monitor/internal/collect"
 	"github.com/BlankTrail/avito-monitor/internal/store"
 	"github.com/BlankTrail/avito-monitor/internal/supervise"
@@ -71,16 +72,44 @@ func (c *collector) Pass(ctx context.Context, w store.Watch) error {
 	return runOnce(ctx, c.store, f, w)
 }
 
+// Confirm reads one vanished listing's own page.
+//
+// The desktop surface, always: item pages are the one thing that surface is
+// wired for and their data-marker set is the one that was measured. ok reports
+// whether the page yielded a listing at all — which is not the same as the
+// listing being alive, and the store treats the two differently.
+func (c *collector) Confirm(ctx context.Context, x store.Confirmable) (avito.Listing, bool, error) {
+	f := transport.NewFetcher(c.leaser, c.pacer,
+		transport.FetchConfig{Surface: avito.SurfaceDesktop})
+	res, err := f.Fetch(ctx, "https://www.avito.ru"+x.URLPath)
+	if err != nil {
+		return avito.Listing{}, false, err
+	}
+	for _, l := range res.Page.Listings {
+		if l.ItemID == x.ItemID {
+			return l, true, nil
+		}
+	}
+	// The page opened and did not contain this listing. Not evidence of
+	// anything: the surface may have changed, or the fetch may have been
+	// redirected somewhere else entirely, and either way it is a page we did
+	// not read rather than a listing we did.
+	return avito.Listing{}, false, nil
+}
+
 // Close releases the transport. Once, when the process stops.
 func (c *collector) Close() error { return c.leaser.Close() }
 
 // startCollecting runs the scheduler and the three background workers that
 // already existed as one-shot calls, each under supervision.
 //
-// Four of the five the spec names. The fifth — the confirmation sweeper — is
-// not here: it is the only one that spends requests on its own initiative, and
-// a second consumer of the same budget needs its own priority question answered
-// before it competes with the scheduler for the same addresses.
+// All five the spec names.
+//
+// The confirmation sweeper is the one that spends requests on its own
+// initiative, and its priority against the scheduler is settled by its own
+// hourly cap rather than by anything here: five requests an hour, a constant
+// and not a setting. It shares the same pacer as everything else, so those five
+// queue behind collection like any other request rather than jumping it.
 func startCollecting(ctx context.Context, s *store.Store, c *collector) {
 	onPanic := func(name, stack string) {
 		// A panic is a row. The whole reason internal/supervise exists is that
@@ -109,6 +138,17 @@ func startCollecting(ctx context.Context, s *store.Store, c *collector) {
 			_, err := s.ProduceSeries(ctx)
 			return err
 		},
+	})
+	sweeper := &collect.Sweeper{
+		Store: s, Confirmer: c, Now: time.Now, Log: logf,
+	}
+	supervise.Go(ctx, supervise.Config{
+		// Every ten minutes, not every hour. The cap is enforced inside the
+		// sweeper against a rolling hour, so a shorter interval spends the same
+		// five requests — it just spreads them out and picks up a listing that
+		// vanished five minutes ago while the site still has its page.
+		Name: "подтверждение", Every: 10 * time.Minute,
+		OnPanic: onPanic, Log: logf, Run: sweeper.Turn,
 	})
 	supervise.Go(ctx, supervise.Config{
 		Name: "уборка", Every: 6 * time.Hour, OnPanic: onPanic, Log: logf,
