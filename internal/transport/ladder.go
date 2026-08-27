@@ -177,6 +177,18 @@ func NewFetcher(l Leaser, p *Pacer, cfg FetchConfig) *Fetcher {
 	return &Fetcher{leaser: l, pacer: p, cfg: cfg}
 }
 
+// On is the same transport pointed at the other surface.
+//
+// The leaser and the pacer are shared, not copied, and that is the whole point:
+// the diagnostic's two requests queue behind collection and count against the
+// same budget as everything else. A second pacer would give a diagnostic its
+// own allowance, which is exactly the sort of accounting that earns a 403.
+func (f *Fetcher) On(surface avito.Surface) *Fetcher {
+	cfg := f.cfg
+	cfg.Surface = surface
+	return &Fetcher{leaser: f.leaser, pacer: f.pacer, cfg: cfg}
+}
+
 // Fetch runs one request to a verdict, applying the remedy each class asks for
 // and no other.
 //

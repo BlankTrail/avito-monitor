@@ -171,6 +171,13 @@ func runOnce(ctx context.Context, s *store.Store, f *transport.Fetcher, w store.
 		fmt.Printf("  сообщений в очереди: %d\n", n)
 	}
 
+	// After the pass is written, so the run this counts includes it, and before
+	// the halt branch, because a soft block is not a halt and a watch that just
+	// hit its second one is exactly the watch worth asking about.
+	if transport.Class(p.Class) == transport.ClassSoftBlock {
+		diagnoseSoftBlock(ctx, s, f.On(avito.SurfaceDesktop).Fetch, w, finished)
+	}
+
 	var halt *transport.HaltError
 	if errors.As(ferr, &halt) {
 		// The watch stays halted, and this program never clears it.
