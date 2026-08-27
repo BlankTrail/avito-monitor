@@ -159,14 +159,33 @@ func (s Search) URL(surface Surface, page int) (string, error) {
 	if path == "" {
 		path = "/all"
 	}
-
-	// A seller page is already canonical: no sort, no page, nothing to add. It
-	// is one request rather than two for exactly that reason.
+	// A seller page needs the sort as much as a search does — measured, not
+	// assumed, and the assumption was wrong.
+	//
+	// The bare shop URL is a showcase, not a page: three fetches of one shop a
+	// minute apart returned twelve listings each time and a different twelve,
+	// with items dropping out and reappearing while the shop itself did
+	// nothing. A watch computing set differences against that reports arrivals
+	// and departures that never happened, every single pass. With s=104 the
+	// same shop returned the identical twelve in the identical order across
+	// three fetches, newest first.
+	//
+	// No p= though, and no host from the surface: a shop page answers in one
+	// request on www.avito.ru with no canonical hop, and the mobile spelling of
+	// one was never measured. Twelve per page rather than fifty is the real
+	// cost of the second thing — a shop that lists more than twelve between two
+	// passes loses the overflow off page one, which is an argument about the
+	// interval and not about the URL.
 	if s.Kind == KindSeller {
 		if page > 1 {
 			return "", ErrDeepPagination
 		}
-		return (&url.URL{Scheme: "https", Host: "www.avito.ru", Path: path}).String(), nil
+		q := url.Values{}
+		q.Set("s", sortByDate)
+		return (&url.URL{
+			Scheme: "https", Host: "www.avito.ru", Path: path,
+			RawQuery: q.Encode(),
+		}).String(), nil
 	}
 
 	q := url.Values{}

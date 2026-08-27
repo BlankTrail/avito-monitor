@@ -203,8 +203,9 @@ func TestTheSameInputGivesTheSameURL(t *testing.T) {
 // TestAShopUrlIsASellerWatch.
 //
 // One request rather than two: /brands/<slug> is already canonical and needs no
-// shell hop. Measured — a single fetch carrying its own state block with
-// forty-five listings, which desktop.catalog.v1 reads unchanged.
+// shell hop. Measured against a live shop — a single fetch, no redirect, twelve
+// listings read by desktop.profile.v1, each carrying the shop's own key, and
+// the shop's whole stock declared as 1200.
 func TestAShopUrlIsASellerWatch(t *testing.T) {
 	s, err := ParseSearch("https://www.avito.ru/brands/bioniqo?src=search_seller_info")
 	if err != nil {
@@ -217,12 +218,34 @@ func TestAShopUrlIsASellerWatch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != "https://www.avito.ru/brands/bioniqo" {
+	if got != "https://www.avito.ru/brands/bioniqo?s=104" {
 		t.Errorf("= %s", got)
 	}
-	// No sort and no page: there is nothing to sort and one page to read.
-	if strings.Contains(got, "s=") || strings.Contains(got, "p=") {
-		t.Errorf("a seller page carried search parameters: %s", got)
+	// No page: twelve listings and one request, and page two costs a second.
+	if strings.Contains(got, "p=") {
+		t.Errorf("a seller page carried a page number: %s", got)
+	}
+}
+
+// TestAShopPageIsSortedOrItIsNoise.
+//
+// The finding that made this a defect and not a preference. Three fetches of
+// one live shop, a minute apart, against the bare URL: twelve listings each
+// time and a different twelve, items dropping out and coming back while the
+// shop did nothing. The same shop with s=104 returned the identical twelve in
+// the identical order all three times.
+//
+// So a seller watch on an unsorted shop page would have reported arrivals and
+// departures that never happened, on every pass, for ever — the same defect
+// s=104 was forced to fix for search, in the one place a person is watching a
+// competitor and would believe it.
+func TestAShopPageIsSortedOrItIsNoise(t *testing.T) {
+	got, err := SearchURL("https://www.avito.ru/brands/abc123/all", SurfaceDesktop, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, "s="+sortByDate) {
+		t.Fatalf("витрина без сортировки: %s", got)
 	}
 }
 
