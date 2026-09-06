@@ -34,9 +34,20 @@ build:
 #
 # This target exists because the spec names this spelling, and it greps, which
 # is a third and weakest net.
+#
+# net/url is deliberately absent from the list, and it was here until the day
+# somebody ran this target. It cannot reach anything -- it parses and prints
+# strings -- and avito.SearchURL needs it, which the spec calls the whole of the
+# entry point, and it is pure. Banning it made `make check` red against a
+# package whose own two tests were green: a rule enforcing a mistake.
+#
+# The two tests are authoritative and this list must match their union.
+# TestTheMakefileAndTheTestsBanTheSameThings fails if they drift, because a
+# target nobody runs -- there is no `make` on the machine this was written on --
+# drifts silently otherwise.
 check-no-net:
 	@echo "checking avito/ imports"
-	@! grep -REn '^\s*(_ )?"(net|net/http|net/url|database/sql|time|os|os/exec)"' \
+	@! grep -REn '^\s*(_ )?"(net|net/http|database/sql|time|os|os/exec)"' \
 		--include='*.go' avito/ \
 		| grep -v '_test.go' \
 		|| (echo "avito/ must not import net, a database, a clock or the OS" && exit 1)
