@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/BlankTrail/avito-monitor/internal/chart"
 )
 
 func aListing(t *testing.T, s *Server, itemID, threadID int64, title string, firstSeen int64) {
@@ -283,5 +285,117 @@ func TestTheHistoryIndexTellsItsRowsApart(t *testing.T) {
 	}
 	if !strings.Contains(body, "₽") {
 		t.Error("в списке нет ни одной цены")
+	}
+}
+
+// countAccent is how many pixels of the series colour the chart actually
+// carries. Nothing else on the picture uses it: the frame, the grid and the
+// labels are greys.
+func countAccent(t *testing.T, png []byte) int {
+	t.Helper()
+	img, _, err := image.Decode(bytes.NewReader(png))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := chart.Accent
+	n := 0
+	b := img.Bounds()
+	for y := b.Min.Y; y < b.Max.Y; y++ {
+		for x := b.Min.X; x < b.Max.X; x++ {
+			r, g, bl, _ := img.At(x, y).RGBA()
+			if uint8(r>>8) == want.R && uint8(g>>8) == want.G && uint8(bl>>8) == want.B {
+				n++
+			}
+		}
+	}
+	return n
+}
+
+// TestTheChartActuallyDrawsTheLineAtTheCadenceTheStoreWritesAt.
+//
+// The defect this exists for: chartMaxGap was six hours, and a snapshot is
+// written when the fingerprint moves plus one anchor every
+// Retention.AnchorEvery — a day. So a listing whose price held had readings a
+// day apart, every pair further apart than the gap, every pair refused, and the
+// chart came out with correct axes and no line at all.
+//
+// TestTheChartIsAPng did not catch it because its two readings are an hour
+// apart: a cadence the store never produces. This one uses the real one.
+func TestTheChartActuallyDrawsTheLineAtTheCadenceTheStoreWritesAt(t *testing.T) {
+	s := newServer(t)
+	const day = 24 * 60 * 60
+	base := int64(1_700_000_000)
+	aListing(t, s, 100, 100, "iPhone 15", base)
+	for i, price := range []int64{4_000_000, 4_000_000, 3_900_000, 3_900_000, 3_700_000} {
+		aSnapshot(t, s, 100, base+int64(i)*day, "exact", price)
+	}
+
+	rec := get(t, s, "/history/chart?thread=100")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("= %d: %s", rec.Code, rec.Body.String())
+	}
+	if n := countAccent(t, rec.Body.Bytes()); n < 100 {
+		t.Fatalf("на графике %d пикселей линии: оси нарисованы, а данных нет", n)
+	}
+}
+
+// TestASilenceLongerThanTheCadenceStillBreaksTheLine, because the fix must not
+// have been «join everything». A stretch where a reading was due and none was
+// written is a stretch nobody read, and drawing through it is a guess.
+func TestASilenceLongerThanTheCadenceStillBreaksTheLine(t *testing.T) {
+	s := newServer(t)
+	const day = 24 * 60 * 60
+	base := int64(1_700_000_000)
+	aListing(t, s, 100, 100, "iPhone 15", base)
+	// Two readings a fortnight apart: eleven anchors that should have been
+	// written and were not.
+	aSnapshot(t, s, 100, base, "exact", 4_000_000)
+	aSnapshot(t, s, 100, base+14*day, "exact", 3_000_000)
+
+	rec := get(t, s, "/history/chart?thread=100")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("= %d", rec.Code)
+	}
+	if n := countAccent(t, rec.Body.Bytes()); n > 20 {
+		t.Errorf("линия проведена через двухнедельное молчание: %d пикселей", n)
+	}
+}
+
+// TestAChartReachingPastAYearSaysWhyItIsBroken.
+//
+// Past SnapshotWeeklyAfter the readings are thinned to one a week — further
+// apart than the gap — so the line breaks over a stretch somebody DID read. The
+// rows that would prove it were deleted on purpose, so the picture cannot tell
+// that from a real silence and the page says so instead of guessing.
+func TestAChartReachingPastAYearSaysWhyItIsBroken(t *testing.T) {
+	s := newServer(t)
+	const day = 24 * 60 * 60
+	now := s.now().Unix()
+	aListing(t, s, 100, 100, "iPhone 15", now-400*day)
+	aSnapshot(t, s, 100, now-400*day, "exact", 4_000_000)
+	aSnapshot(t, s, 100, now-2*day, "exact", 3_000_000)
+	aMember(t, s, aWatch(t, s, "наблюдение"), 100)
+
+	if !strings.Contains(get(t, s, "/history?thread=100").Body.String(),
+		"прорежены до одного в неделю") {
+		t.Error("страница не объяснила разрыв")
+	}
+}
+
+// TestARecentChartIsNotToldAboutThinning. The note is true only where it
+// applies; on a fortnight of history it would explain a break that has a
+// different cause entirely.
+func TestARecentChartIsNotToldAboutThinning(t *testing.T) {
+	s := newServer(t)
+	const day = 24 * 60 * 60
+	now := s.now().Unix()
+	aListing(t, s, 100, 100, "iPhone 15", now-10*day)
+	aSnapshot(t, s, 100, now-10*day, "exact", 4_000_000)
+	aSnapshot(t, s, 100, now-9*day, "exact", 3_900_000)
+	aMember(t, s, aWatch(t, s, "наблюдение"), 100)
+
+	if strings.Contains(get(t, s, "/history?thread=100").Body.String(),
+		"прорежены до одного в неделю") {
+		t.Error("недельной истории рассказали про годовое прореживание")
 	}
 }
