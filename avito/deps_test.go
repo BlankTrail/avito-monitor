@@ -8,6 +8,13 @@ import (
 	"testing"
 )
 
+// bannedTransitively is what this package may not reach, however indirectly.
+//
+// Package level rather than a local, so TestTheMakefileAndTheTestsBanTheSameThings
+// can read it: the Makefile keeps its own copy of this list in a grep, and the
+// two drifted the moment net/url was allowed here and not there.
+var bannedTransitively = []string{"net", "net/http", "database/sql"}
+
 // TestPackageReachesNoNetwork keeps every test in this package offline by
 // construction rather than by discipline.
 //
@@ -40,10 +47,9 @@ func TestPackageReachesNoNetwork(t *testing.T) {
 	// package and calls it «the whole of the entry point, and it is pure». A
 	// rule that forbade the spec's own pure function would be a rule enforcing
 	// a mistake rather than a design.
-	banned := []string{"net", "net/http", "database/sql"}
 	for _, line := range strings.Split(string(out), "\n") {
 		dep := strings.TrimSpace(line)
-		for _, b := range banned {
+		for _, b := range bannedTransitively {
 			if dep == b {
 				t.Errorf("package avito reaches %q; it must stay offline", dep)
 			}

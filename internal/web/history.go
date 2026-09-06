@@ -63,14 +63,38 @@ func groupThousands(v int64) string {
 	return b.String()
 }
 
-// chartMaxGap is how long a silence has to be before the line breaks.
+// chartMaxGap is how long a silence has to be before the line breaks, and it
+// is derived from the write cadence rather than picked.
 //
-// Six hours. The number is the caller's knowledge and not the chart's: only
-// this side knows how often a listing was supposed to be read, and the
-// difference between «the price held for a week» and «nobody looked for a week»
-// is exactly this. Six is comfortably longer than any watch's interval and far
-// shorter than the retention that thins old snapshots to one a day.
-const chartMaxGap = 6 * 60 * 60
+// It used to be six hours, with a comment saying six «is comfortably longer
+// than any watch's interval». The watch interval is not what governs this: a
+// snapshot is written when the fingerprint MOVES, plus one anchor every
+// Retention.AnchorEvery — a day by default — for a listing that has not
+// changed. So a phone whose price held for a week has seven readings a day
+// apart, every pair of them further apart than six hours, every pair refused,
+// and the chart came out with correct axes and no line at all. That is what
+// looking at the rendered PNG showed.
+//
+// The same comment named the fact that sank it — «far shorter than the
+// retention that thins old snapshots to one a day» — and drew the wrong
+// conclusion from it.
+//
+// So: the anchor interval plus a quarter of it. Below that a missing reading
+// means we would have written a row and did not, which is a real silence.
+// Above it there is nothing to distinguish a silence from the cadence itself.
+//
+// The remaining hole is named rather than papered over: past thirty days
+// retention thins to one row a day and past a year to one a week, so a stretch
+// old enough to have been thinned breaks the line even though somebody did
+// look. The rows that would prove otherwise were deleted on purpose. The
+// screen says so where a chart reaches that far back.
+func chartMaxGap(r store.Retention) int64 {
+	gap := r.AnchorEvery + r.AnchorEvery/4
+	if gap <= 0 {
+		gap = 30 * time.Hour
+	}
+	return int64(gap / time.Second)
+}
 
 func (s *Server) historyPage(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
@@ -83,7 +107,7 @@ func (s *Server) historyPage(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		b.WriteString(chartCard(series))
+		b.WriteString(chartCard(series, s.Store.Retention(), s.now().Unix()))
 	}
 
 	watches, err := s.Store.Watches(ctx)
@@ -113,7 +137,7 @@ func (s *Server) historyPage(w http.ResponseWriter, r *http.Request) {
 	s.render(w, r, page{Title: "История", Body: rawHTML(b.String())})
 }
 
-func chartCard(series store.ThreadSeries) string {
+func chartCard(series store.ThreadSeries, ret store.Retention, now int64) string {
 	var b strings.Builder
 	b.WriteString(`<div class="card">`)
 	title := series.Title
@@ -157,6 +181,22 @@ func chartCard(series store.ThreadSeries) string {
 		fmt.Fprintf(&b, `<p><img src="/history/chart?thread=%d" alt="%s" `+
 			`style="max-width:100%%"></p>`,
 			series.ThreadID, attr("График цены: "+title))
+		// The one hole the gap rule cannot close, named where it shows rather
+		// than left for somebody to puzzle over.
+		//
+		// The line breaks across a stretch nobody read, and past
+		// SnapshotWeeklyAfter retention has thinned the readings to one a week
+		// — further apart than the gap, so the line breaks there too, over a
+		// stretch somebody did read. The rows that would prove it were deleted
+		// on purpose, so the picture genuinely cannot tell the two apart and
+		// says so instead of guessing either way.
+		if oldest := priced[0].TS; now-oldest > int64(ret.SnapshotWeeklyAfter/time.Second) {
+			b.WriteString(note("neutral",
+				"График уходит дальше года назад. Там снимки прорежены до "+
+					"одного в неделю, поэтому линия рвётся — не потому, что "+
+					"никто не смотрел, а потому, что подробности удалены "+
+					"хранением."))
+		}
 	}
 	b.WriteString(`</div>`)
 	return b.String()
@@ -220,7 +260,7 @@ func (s *Server) historyChart(w http.ResponseWriter, r *http.Request) {
 
 	line := chart.Line{
 		Series: []chart.Series{{Points: points}},
-		MaxGap: chartMaxGap,
+		MaxGap: chartMaxGap(s.Store.Retention()),
 		Loc:    time.UTC,
 		Y:      chart.Axis{Format: num},
 	}
