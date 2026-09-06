@@ -107,17 +107,25 @@ func repostCard(l store.RepostLinkRow, named map[int64]store.ListingName) string
 	return b.String()
 }
 
+// listingLink names one side of a pair, and the number is not optional.
+//
+// A repost has the SAME title as what it replaced — that is what makes it a
+// repost — so a card showing two titles showed one string twice, above and
+// below the word «вместо», with nothing to say which was which. Seen on the
+// rendered screen; the numbers are the whole subject of the feature, «одно
+// объявление под новым номером», and they were the one thing not on it.
 func listingLink(id int64, named map[int64]store.ListingName) string {
 	n, ok := named[id]
 	title := n.Title
 	if !ok || title == "" {
 		title = "объявление " + strconv.FormatInt(id, 10)
 	}
-	if n.URLPath == "" {
-		return esc(title)
+	label := esc(title)
+	if n.URLPath != "" {
+		label = fmt.Sprintf(`<a href="https://www.avito.ru%s" rel="noreferrer">%s</a>`,
+			attr(n.URLPath), esc(title))
 	}
-	return fmt.Sprintf(`<a href="https://www.avito.ru%s" rel="noreferrer">%s</a>`,
-		attr(n.URLPath), esc(title))
+	return label + fmt.Sprintf(` <span class="hint">№ %d</span>`, id)
 }
 
 // stateSentence is what happened, in a sentence rather than a stored word.

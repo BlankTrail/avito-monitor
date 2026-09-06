@@ -219,3 +219,21 @@ func TestAnEmptyScreenSaysWhyItMightBeEmpty(t *testing.T) {
 		t.Errorf("an empty screen explains nothing: %s", body)
 	}
 }
+
+// TestBothSidesOfAPairAreDistinguishable.
+//
+// A repost carries the SAME title as what it replaced — that is what makes it
+// one — so a card showing two titles showed one string twice, above and below
+// «вместо», with nothing to say which was which. The numbers are the subject of
+// the whole feature and were the one thing missing from it.
+func TestBothSidesOfAPairAreDistinguishable(t *testing.T) {
+	s := newServer(t)
+	aRepostPair(t, s, "iPhone 13 Pro, 256 ГБ", "linked")
+
+	body := get(t, s, "/reposts").Body.String()
+	for _, id := range []string{"№ 200", "№ 100"} {
+		if !strings.Contains(body, id) {
+			t.Errorf("на карточке нет номера %s: обе стороны читаются одинаково", id)
+		}
+	}
+}
