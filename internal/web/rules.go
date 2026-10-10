@@ -3,6 +3,7 @@
 package web
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -734,13 +735,66 @@ func (s *Server) saveTarget(w http.ResponseWriter, r *http.Request) {
 	if id > 0 {
 		enabled = ticked(r, "enabled")
 	}
-	if _, err := s.Store.SaveTarget(r.Context(), store.TargetRow{
+	ctx := r.Context()
+	before, err := s.Store.Targets(ctx)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	// The same chat twice is every message twice. Found by adding the
+	// recipient a second time on 11 October 2026 and getting a second row.
+	for _, t := range before {
+		if t.ID != id && t.Address == address {
+			http.Error(w, "этот чат уже добавлен — «"+t.Name+"»", http.StatusBadRequest)
+			return
+		}
+	}
+	if _, err := s.Store.SaveTarget(ctx, store.TargetRow{
 		ID: id, Name: name, Kind: targetKind, Address: address, Enabled: enabled,
 	}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	// The first recipient gives the watches that already exist their default
+	// rules. They used to be created only when a watch was added, so a person
+	// who set up watches first and the bot second — the order the screens
+	// invite — had watches that told nobody anything, and the screen's advice
+	// was to add another watch, which seeded rules for that one alone.
+	if len(before) == 0 {
+		if err := s.seedMissingRules(ctx); err != nil {
+			http.Error(w, "получатель добавлен, а правила — нет: "+err.Error(),
+				http.StatusInternalServerError)
+			return
+		}
+	}
 	http.Redirect(w, r, "/rules", http.StatusSeeOther)
+}
+
+// seedMissingRules gives every watch without a rule of its own the defaults.
+func (s *Server) seedMissingRules(ctx context.Context) error {
+	watches, err := s.Store.Watches(ctx)
+	if err != nil {
+		return err
+	}
+	existing, err := rules.All(ctx, s.Store)
+	if err != nil {
+		return err
+	}
+	has := map[int64]bool{}
+	for _, r := range existing {
+		if r.Scope.Kind == rules.ScopeWatch {
+			has[r.Scope.ID] = true
+		}
+	}
+	for _, w := range watches {
+		if has[w.ID] {
+			continue
+		}
+		if err := s.seedRules(ctx, w.ID); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *Server) deleteTarget(w http.ResponseWriter, r *http.Request) {
