@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/BlankTrail/avito-monitor/internal/store"
@@ -62,12 +63,16 @@ func TestThePanelRefusesTheLanBeforeItOpensAPort(t *testing.T) {
 	}
 }
 
-// TestTheChannelCheckReadsAndDoesNotDial.
+// TestTheChannelCheckAsksTheExitAndNamesAFailure.
 //
-// Dialling every address of a thousand-line list from a settings screen is a
-// thousand connections a person did not ask for. The pool finds out which ones
-// work by using them, and Mixer demotes the ones that do not.
-func TestTheChannelCheckReadsAndDoesNotDial(t *testing.T) {
+// It used to read the list and count it, on the argument that dialling from a
+// settings screen is connections nobody asked for. That argument held while the
+// count meant something; on a provider's list measured on 11 October 2026 it
+// said «15000 в списке» over exits thirteen in twenty of which were
+// intercepting TLS. So the check now asks a sample of twenty — bounded, spread,
+// and still never the whole list — and an exit nothing answers on is a failure
+// it names, without the credential.
+func TestTheChannelCheckAsksTheExitAndNamesAFailure(t *testing.T) {
 	st := openPanelStore(t)
 	ctx := context.Background()
 	id, err := st.SaveChannel(ctx, store.Channel{
@@ -77,17 +82,18 @@ func TestTheChannelCheckReadsAndDoesNotDial(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := st.ReplaceProxies(ctx, id, []store.Proxy{
-		// A port nothing listens on. If the check dialled, this would fail.
-		{ChannelID: id, Scheme: "socks5", Host: "127.0.0.1", Port: 1, Enabled: true},
+		// A port nothing listens on.
+		{ChannelID: id, Scheme: "socks5", Host: "127.0.0.1", Port: 1,
+			Username: "u", Password: "s3cr3t", Enabled: true},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	summary, err := buildPanel(st).CheckChannel(ctx, id)
-	if err != nil {
-		t.Fatalf("the check failed on an address nothing answers: %v", err)
+	_, err = buildPanel(st).CheckChannel(ctx, id)
+	if err == nil {
+		t.Fatal("an exit nothing answers on passed the check")
 	}
-	if summary == "" {
-		t.Error("the check said nothing")
+	if strings.Contains(err.Error(), "s3cr3t") {
+		t.Errorf("the credential leaked: %v", err)
 	}
 }
 
