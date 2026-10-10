@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"github.com/BlankTrail/avito-monitor/avito"
 
 	"github.com/BlankTrail/avito-monitor/internal/lifecycle"
 )
@@ -18,6 +19,10 @@ type prevPass struct {
 	evidenceAt int64
 	lastTotal  *int64
 	exists     bool
+	// items is the most recent pass that read anything, in page order.
+	// Comparable reads it to decide from the data whether a change of
+	// identity changed the market.
+	items []int64
 }
 
 // readPrevPass reads the predecessor inside the transaction, before this pass's
@@ -50,7 +55,26 @@ func readPrevPass(ctx context.Context, tx *sql.Tx, watchID int64) (prevPass, err
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return p, fmt.Errorf("store: previous evidential pass: %w", err)
 	}
-	return p, nil
+
+	rows, err := tx.QueryContext(ctx, `
+		SELECT item_id FROM pass_items
+		WHERE pass_id = (SELECT p.id FROM passes p
+		                 WHERE p.watch_id = ?
+		                   AND EXISTS (SELECT 1 FROM pass_items i WHERE i.pass_id = p.id)
+		                 ORDER BY p.id DESC LIMIT 1)
+		ORDER BY position`, watchID)
+	if err != nil {
+		return p, fmt.Errorf("store: previous pass items: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return p, err
+		}
+		p.items = append(p.items, id)
+	}
+	return p, rows.Err()
 }
 
 // passFacts assembles what lifecycle needs from this pass and the one before.
@@ -58,8 +82,14 @@ func readPrevPass(ctx context.Context, tx *sql.Tx, watchID int64) (prevPass, err
 // is_seed is derived rather than trusted. A caller can be wrong about it, and
 // the store can see the truth: a watch with no previous pass is being seeded,
 // whatever the caller believes.
-func passFacts(p Pass, w Watch, prev prevPass) lifecycle.PassFacts {
+func passFacts(p Pass, w Watch, prev prevPass, listings []avito.Listing) lifecycle.PassFacts {
+	items := make([]int64, 0, len(listings))
+	for _, l := range listings {
+		items = append(items, l.ItemID)
+	}
 	return lifecycle.PassFacts{
+		Items:          items,
+		PrevItems:      prev.items,
 		Class:          p.Class,
 		Surface:        string(p.Surface),
 		Path:           p.Path,

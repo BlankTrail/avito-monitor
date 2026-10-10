@@ -77,3 +77,44 @@ func TestComparableDoesNotCareWhetherThePassWasAdmissible(t *testing.T) {
 			"Admissible's question", v.Why)
 	}
 }
+
+func ids(from, to int64) []int64 {
+	var out []int64
+	for i := from; i < to; i++ {
+		out = append(out, i)
+	}
+	return out
+}
+
+// TestAChangedIdentityOverTheSameMarketIsComparable.
+//
+// Measured on 11 October 2026 through BlankTrail with a rotating pool: passes on
+// different sessions and exits shared thirty of thirty, in order. The identity
+// rule, taken as written, called every one of them incomparable.
+func TestAChangedIdentityOverTheSameMarketIsComparable(t *testing.T) {
+	prev := ids(100, 130)
+	// Three arrivals on top, the old window below them, three pushed off.
+	cur := append([]int64{1, 2, 3}, ids(100, 127)...)
+	v := Comparable(PassFacts{Session: "b", PrevSession: "a", PrevItems: prev, Items: cur})
+	if !v.Admissible {
+		t.Errorf("same market, new identity: %s", v.Why)
+	}
+}
+
+// TestAChangedIdentityOverADifferentSliceIsNot. The direct-mode measurement
+// that made the rule: 23% shared across identities, scattered.
+func TestAChangedIdentityOverADifferentSliceIsNot(t *testing.T) {
+	prev := ids(100, 130)
+	var cur []int64
+	for i := int64(0); i < 30; i++ {
+		if i%4 == 0 {
+			cur = append(cur, 100+i) // one in four shared
+		} else {
+			cur = append(cur, 900+i)
+		}
+	}
+	v := Comparable(PassFacts{Session: "b", PrevSession: "a", PrevItems: prev, Items: cur})
+	if v.Admissible {
+		t.Error("a different slice was taken for the same market")
+	}
+}

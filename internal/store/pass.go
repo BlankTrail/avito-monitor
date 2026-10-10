@@ -107,7 +107,7 @@ func savePassTx(ctx context.Context, tx *sql.Tx, p Pass, listings []avito.Listin
 	if err != nil {
 		return out, err
 	}
-	facts := passFacts(p, w, prev)
+	facts := passFacts(p, w, prev, listings)
 	adm := lifecycle.Admissible(facts)
 	out.Facts, out.Admissible, out.Comparable = facts, adm, lifecycle.Comparable(facts)
 	p.IsSeed = facts.IsSeed

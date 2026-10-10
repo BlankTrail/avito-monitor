@@ -46,6 +46,10 @@ type PassFacts struct {
 	// PrevSession the previous pass's. They are what Comparable reads.
 	Session     string
 	PrevSession string
+	// Items and PrevItems are this pass and the last one that read anything,
+	// in page order. Comparable reads them when the identity changed.
+	Items     []int64
+	PrevItems []int64
 
 	StartedAt      int64
 	PrevEvidenceAt int64
