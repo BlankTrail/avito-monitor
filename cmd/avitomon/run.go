@@ -142,7 +142,14 @@ func runOnce(ctx context.Context, s *store.Store, f *transport.Fetcher, w store.
 	if ferr != nil {
 		p.Error = ferr.Error()
 	}
-	saved, err := s.SavePass(ctx, p, res.Page.Listings)
+	// Written on a context the restart cannot cancel. The request has been
+	// spent by now; losing its reading to a settings change that happened
+	// mid-pass — «save pass: begin: context canceled», seen on 11 October 2026
+	// the first time the collector restarted itself — throws away the one
+	// thing the budget paid for.
+	saveCtx, cancelSave := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+	defer cancelSave()
+	saved, err := s.SavePass(saveCtx, p, res.Page.Listings)
 	if err != nil {
 		return err
 	}
