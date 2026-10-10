@@ -8,8 +8,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/BlankTrail/avito-monitor/avito"
 	"github.com/BlankTrail/avito-monitor/internal/store"
 	"github.com/BlankTrail/avito-monitor/internal/track"
+	"github.com/BlankTrail/avito-monitor/internal/transport"
 )
 
 // TestAPanicIsWrittenWhereThePanelReadsIt.
@@ -81,5 +83,36 @@ func TestAnExitAddedAfterStartChangesTheFingerprint(t *testing.T) {
 	}
 	if again, _ := transportFingerprint(ctx, s); again == after {
 		t.Error("a new key left the fingerprint unchanged")
+	}
+}
+
+// fakeLeaser counts how it was opened; nothing here dials.
+type fakeLeaser struct{ closed bool }
+
+func (f *fakeLeaser) Acquire(context.Context) (transport.Lease, error) { return nil, nil }
+func (f *fakeLeaser) Mode() transport.Mode                             { return transport.ModeDirect }
+func (f *fakeLeaser) Caps() transport.Caps                             { return transport.Caps{Addresses: 1} }
+func (f *fakeLeaser) Close() error                                     { f.closed = true; return nil }
+
+// TestEachSurfaceHasItsOwnLeaser.
+//
+// The process held one leaser, profiled by whichever watch was first. A desktop
+// watch behind a mobile first watch was served through iOS ports and stored the
+// mobile page as a desktop reading (11 October 2026).
+func TestEachSurfaceHasItsOwnLeaser(t *testing.T) {
+	m, d := &fakeLeaser{}, &fakeLeaser{}
+	c := &collector{leasers: map[avito.Surface]transport.Leaser{
+		avito.SurfaceMobile: m, avito.SurfaceDesktop: d,
+	}}
+	ctx := context.Background()
+	if got, _ := c.leaserFor(ctx, avito.SurfaceDesktop); got != d {
+		t.Error("a desktop watch was handed the mobile leaser")
+	}
+	if got, _ := c.leaserFor(ctx, avito.SurfaceMobile); got != m {
+		t.Error("a mobile watch was handed the desktop leaser")
+	}
+	_ = c.Close()
+	if !m.closed || !d.closed {
+		t.Error("Close left a leaser open")
 	}
 }

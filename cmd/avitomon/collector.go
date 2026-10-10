@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/BlankTrail/avito-monitor/avito"
@@ -27,37 +28,79 @@ import (
 // first tick. The budget screen would keep promising a rate the collector had
 // already exceeded, and the first anybody would know of it is a ban.
 type collector struct {
-	store  *store.Store
-	leaser transport.Leaser
-	pacer  *transport.Pacer
+	store *store.Store
+	pacer *transport.Pacer
+	opts  leaserOpts
+
+	// One leaser per surface, opened when a watch on that surface first needs
+	// it. Found on 11 October 2026: the process held ONE leaser whose profile
+	// came from whichever watch was first — a mobile one — so a desktop watch
+	// on PlayStation 5 was served through iOS ports, received the mobile page
+	// and stored thirty listings without sellers as a desktop reading. Item
+	// pages for the confirmation sweep, always desktop, went the same way.
+	// The surface is a port-profile decision (bt.Spec), not a header one, so it
+	// cannot be decided per request on a shared pool.
+	mu      sync.Mutex
+	leasers map[avito.Surface]transport.Leaser
 }
 
-// openCollector builds the transport once.
+// openCollector opens the transport for the first watch's surface, which also
+// proves the configuration works; the other surface opens when first needed.
 func openCollector(ctx context.Context, s *store.Store, opts leaserOpts) (*collector, error) {
-	mode, err := s.TransportMode(ctx)
+	if _, err := s.TransportMode(ctx); err != nil {
+		return nil, err
+	}
+	surface := avito.SurfaceMobile
+	if ws, err := s.Watches(ctx); err == nil && len(ws) > 0 && ws[0].Surface != "" {
+		surface = ws[0].Surface
+	}
+	c := &collector{
+		store: s, opts: opts,
+		leasers: map[avito.Surface]transport.Leaser{},
+		pacer: transport.NewPacer(transport.PacerConfig{
+			Floor:   transport.DefaultFloor,
+			Jitter:  transport.DefaultJitter,
+			Ceiling: transport.DefaultCeiling,
+			Window:  transport.DefaultWindow,
+		}),
+	}
+	if _, err := c.leaserFor(ctx, surface); err != nil {
+		return nil, err
+	}
+	return c, nil
+}
+
+// leaserFor is the surface's leaser, opened on first use. The pacer is shared:
+// both surfaces leave through the same addresses, and the per-address ceiling
+// is the site's, whichever profile asks.
+func (c *collector) leaserFor(ctx context.Context, surface avito.Surface) (transport.Leaser, error) {
+	if surface == "" {
+		surface = avito.SurfaceMobile
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if l, ok := c.leasers[surface]; ok {
+		return l, nil
+	}
+	mode, err := c.store.TransportMode(ctx)
 	if err != nil {
 		return nil, err
 	}
-	// The warm-up root is a watch's origin, and a direct session mints its
-	// identity by navigating to the host it is about to read. Every watch this
-	// process reads is on Avito, so the first due watch's own URL is as good a
-	// root as any — and when there is none yet, the site's front page is.
-	root := store.Watch{URL: "https://m.avito.ru/", Surface: ""}
-	if due, err := s.Watches(ctx); err == nil && len(due) > 0 {
-		root = due[0]
+	// The warm-up root is the surface's own host: a direct session mints its
+	// identity by navigating to the host it is about to read.
+	root := store.Watch{URL: "https://m.avito.ru/", Surface: surface}
+	if surface == avito.SurfaceDesktop {
+		root.URL = "https://www.avito.ru/"
 	}
-	leaser, err := openLeaser(ctx, s, mode, root, opts)
+	l, err := openLeaser(ctx, c.store, mode, root, c.opts)
 	if err != nil {
 		return nil, err
 	}
-	pacer := transport.NewPacer(transport.PacerConfig{
-		Floor:   transport.DefaultFloor,
-		Jitter:  transport.DefaultJitter,
-		Ceiling: transport.DefaultCeiling,
-		Window:  transport.DefaultWindow,
-	})
-	pacer.SetAddresses(leaser.Caps().Addresses)
-	return &collector{store: s, leaser: leaser, pacer: pacer}, nil
+	c.leasers[surface] = l
+	if n := l.Caps().Addresses; n > 0 {
+		c.pacer.SetAddresses(n)
+	}
+	return l, nil
 }
 
 // Pass reads one watch.
@@ -67,7 +110,11 @@ func openCollector(ctx context.Context, s *store.Store, opts leaserOpts) (*colle
 // own — only the two shared things and a config — so building one is three
 // assignments.
 func (c *collector) Pass(ctx context.Context, w store.Watch) error {
-	f := transport.NewFetcher(c.leaser, c.pacer,
+	l, err := c.leaserFor(ctx, w.Surface)
+	if err != nil {
+		return err
+	}
+	f := transport.NewFetcher(l, c.pacer,
 		transport.FetchConfig{Surface: w.Surface})
 	return runOnce(ctx, c.store, f, w)
 }
@@ -79,7 +126,11 @@ func (c *collector) Pass(ctx context.Context, w store.Watch) error {
 // whether the page yielded a listing at all — which is not the same as the
 // listing being alive, and the store treats the two differently.
 func (c *collector) Confirm(ctx context.Context, x store.Confirmable) (avito.Listing, bool, error) {
-	f := transport.NewFetcher(c.leaser, c.pacer,
+	l, err := c.leaserFor(ctx, avito.SurfaceDesktop)
+	if err != nil {
+		return avito.Listing{}, false, err
+	}
+	f := transport.NewFetcher(l, c.pacer,
 		transport.FetchConfig{Surface: avito.SurfaceDesktop})
 	res, err := f.Fetch(ctx, "https://www.avito.ru"+x.URLPath)
 	if err != nil {
@@ -98,7 +149,17 @@ func (c *collector) Confirm(ctx context.Context, x store.Confirmable) (avito.Lis
 }
 
 // Close releases the transport. Once, when the process stops.
-func (c *collector) Close() error { return c.leaser.Close() }
+func (c *collector) Close() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	var first error
+	for _, l := range c.leasers {
+		if err := l.Close(); err != nil && first == nil {
+			first = err
+		}
+	}
+	return first
+}
 
 // startCollecting runs the scheduler and the three background workers that
 // already existed as one-shot calls, each under supervision.
