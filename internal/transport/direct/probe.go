@@ -75,8 +75,13 @@ func ProbeExit(ctx context.Context, egress, host string) Probe {
 			// The organisation is the name a person recognises; the full
 			// distinguished name escapes its commas and reads as noise.
 			p.Issuer = c.Issuer.String()
-			if len(c.Issuer.Organization) > 0 {
+			switch {
+			case len(c.Issuer.Organization) > 0:
 				p.Issuer = c.Issuer.Organization[0]
+			case c.Issuer.String() == c.Subject.String():
+				// «CN=m.avito.ru» as an issuer reads like the site's own
+				// signature; it is a certificate that signed itself.
+				p.Issuer = "самоподписанный"
 			}
 		}
 	case errors.As(err, &invalid), errors.As(err, &hostname):

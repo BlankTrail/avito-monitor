@@ -130,7 +130,10 @@ func checkExits(ctx context.Context, all []string, total int) (string, error) {
 	fmt.Fprintf(&b, "Проверено %d из %d: настоящий сертификат Авито у %d", len(chosen), total, ok)
 	if mitm > 0 {
 		fmt.Fprintf(&b, ", подменяют сертификат %d", mitm)
-		if issuer != "" {
+		switch {
+		case issuer == "самоподписанный":
+			b.WriteString(" (сертификат самоподписанный)")
+		case issuer != "":
 			fmt.Fprintf(&b, " (подпись «%s»)", issuer)
 		}
 	}
