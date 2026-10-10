@@ -818,3 +818,27 @@ func TestATwoRequestPassReportsBothItsRequests(t *testing.T) {
 		t.Errorf("Bytes = %d, want %d — the shell went uncounted", res.Bytes, want)
 	}
 }
+
+// TestChallengeInDirectModeWalksToAnotherExitFirst.
+//
+// Measured on 11 October 2026: a direct installation with a hundred and
+// thirty-five exits halted all five watches in five passes, none of the spare
+// exits tried. The wall is bound to the address; with others configured the
+// challenge is a reason to move, and the halt is for when there is nowhere left.
+func TestChallengeInDirectModeWalksToAnotherExitFirst(t *testing.T) {
+	now := time.Date(2026, 10, 11, 12, 0, 0, 0, time.UTC)
+	l := &recordingLease{warm: true, replies: []reply{{439, captchaHTML}, {439, captchaHTML}, {439, captchaHTML}}}
+	f, _ := newTestFetcher(t, l, Caps{RotatesEgress: true, Addresses: 1, Exits: 2}, &now)
+
+	_, err := f.Fetch(context.Background(), "https://m.avito.ru/all?q=x")
+	if l.rotated == 0 || l.renewed == 0 {
+		t.Errorf("rotated %d, renewed %d: a spare exit was not tried", l.rotated, l.renewed)
+	}
+	var halt *HaltError
+	if !errors.As(err, &halt) {
+		t.Errorf("err = %v: with every exit walled it must still halt", err)
+	}
+	if l.rotated > 2 {
+		t.Errorf("walked %d exits of 2", l.rotated)
+	}
+}

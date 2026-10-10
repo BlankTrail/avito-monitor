@@ -409,6 +409,24 @@ func (f *Fetcher) Fetch(ctx context.Context, target string) (Result, error) {
 			return res, nil
 
 		case ClassChallenge:
+			// Without a solver the challenge cannot be passed — but it can be
+			// walked away from while there is somewhere to walk. Avito's wall
+			// is bound to the address («доступ ограничен: проблема с IP»), and
+			// a direct installation with a list of exits used to halt every
+			// watch on the first one: measured on 11 October 2026, five
+			// watches halted in five passes with a hundred and thirty-five
+			// exits never tried. A new address gets a new identity too — the
+			// jar that met the wall carries the flag with it. Only with
+			// nowhere left to go is it the halt it always was.
+			if !f.leaser.Caps().SolvesChallenges && f.leaser.Caps().RotatesEgress &&
+				rotations < f.exitBudget() {
+				rotations++
+				if err := lease.RotateEgress(ctx); err == nil {
+					if err := lease.RenewIdentity(ctx); err == nil {
+						continue
+					}
+				}
+			}
 			if !f.leaser.Caps().SolvesChallenges {
 				return res, &HaltError{
 					Verdict: res.Verdict, URL: target,
