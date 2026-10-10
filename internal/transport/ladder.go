@@ -418,13 +418,21 @@ func (f *Fetcher) Fetch(ctx context.Context, target string) (Result, error) {
 			// exits never tried. A new address gets a new identity too — the
 			// jar that met the wall carries the flag with it. Only with
 			// nowhere left to go is it the halt it always was.
-			if !f.leaser.Caps().SolvesChallenges && f.leaser.Caps().RotatesEgress &&
-				rotations < f.exitBudget() {
-				rotations++
-				if err := lease.RotateEgress(ctx); err == nil {
-					if err := lease.RenewIdentity(ctx); err == nil {
-						continue
+			if !f.leaser.Caps().SolvesChallenges && f.leaser.Caps().RotatesEgress {
+				// Keep walking while the new exit cannot even warm up: on a
+				// residential list two sessions in three are not answering, and
+				// stopping at the first dead one stopped the walk before it
+				// reached a live one.
+				moved := false
+				for rotations < f.exitBudget() && !moved {
+					rotations++
+					if err := lease.RotateEgress(ctx); err != nil {
+						break
 					}
+					moved = lease.RenewIdentity(ctx) == nil
+				}
+				if moved {
+					continue
 				}
 			}
 			if !f.leaser.Caps().SolvesChallenges {

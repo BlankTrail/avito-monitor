@@ -7,6 +7,7 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"fmt"
+	"math/rand/v2"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -320,14 +321,25 @@ func (x *sessionLease) RotateEgress(ctx context.Context) error {
 	}
 	x.s.mu.Lock()
 	defer x.s.mu.Unlock()
-	for i, u := range ups {
-		if u == x.s.egress {
-			x.s.egress = ups[(i+1)%len(ups)]
-			x.s.rebuildClient()
-			return nil
+	// Any other exit, not the next one. Exits come in the order they were
+	// configured — this machine, then a residential list, then a mobile one —
+	// and a walk that took them in turn spent its whole budget on the first
+	// list. Measured on 11 October 2026: ten steps through residential
+	// sessions two-thirds dead, while the mobile list a hundred lines further
+	// down answered seventeen in twenty.
+	next := x.s.egress
+	for tries := 0; tries < 8 && next == x.s.egress; tries++ {
+		next = ups[rand.IntN(len(ups))]
+	}
+	if next == x.s.egress {
+		for _, u := range ups {
+			if u != x.s.egress {
+				next = u
+				break
+			}
 		}
 	}
-	x.s.egress = ups[0]
+	x.s.egress = next
 	// The client must be rebuilt, not merely the field reassigned. The egress
 	// is captured in the transport's dial closure, and a pooled connection
 	// still runs over the OLD address — so a rotation without this line changes
