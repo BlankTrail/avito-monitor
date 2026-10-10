@@ -263,3 +263,25 @@ func TestOneEngineIsOnePass(t *testing.T) {
 		t.Errorf("two passes produced %d summaries, want one each", n)
 	}
 }
+
+// TestASingleFiringIsAMessageNotASummaryOfOne.
+//
+// Arrivals and vanishings aggregate by default since 11 October 2026, and a
+// quiet watch's one arrival must not lose its own wording and its decision for
+// a «summary» of one line.
+func TestASingleFiringIsAMessageNotASummaryOfOne(t *testing.T) {
+	s := openStore(t)
+	r := priceRule()
+	r.Aggregate, r.Targets = true, []int64{addTarget(t, s)}
+	saved := persist(t, s, r)
+	if got := applyAll(t, engineOn(t, s), saved, fortyChanges()[:1]); got != 1 {
+		t.Fatalf("queued %d", got)
+	}
+	var ruleEventID *int64
+	if err := s.DB().QueryRow(`SELECT rule_event_id FROM notify_outbox LIMIT 1`).Scan(&ruleEventID); err != nil {
+		t.Fatal(err)
+	}
+	if ruleEventID == nil {
+		t.Error("one firing went out as a summary pointing at nothing")
+	}
+}

@@ -126,10 +126,22 @@ func (e *Engine) Flush(ctx context.Context) (int, error) {
 			continue
 		}
 		r := firings[0].Rule
-		n, err := // A summary carries no button. It is the outcome of many decisions,
-			// and a button on it could only name one of them — which is the same
-			// reason its rule_event_id is nil.
-			e.queue(ctx, r, e.summarise(r, firings), "", nil)
+		var n int
+		var err error
+		if len(firings) == 1 {
+			// One firing is a message, not a summary of one: it keeps its own
+			// wording, its button and its rule_event_id. Aggregation is for the
+			// pass that brought forty, and a default that aggregates must not
+			// make the quiet watch's single arrival worse than it was.
+			f := firings[0]
+			id := f.EventID
+			n, err = e.queue(ctx, r, e.render(f.Event.Change), e.attach(f.Event.Change), &id)
+		} else {
+			// A summary carries no button. It is the outcome of many decisions,
+			// and a button on it could only name one of them — which is the
+			// same reason its rule_event_id is nil.
+			n, err = e.queue(ctx, r, e.summarise(r, firings), "", nil)
+		}
 		if err != nil {
 			return queued, err
 		}

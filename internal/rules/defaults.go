@@ -31,6 +31,12 @@ func DefaultsForWatch(watchID int64, targets []int64) []Rule {
 			// dedup key for this kind carries no numbers, so it fires at most
 			// once per listing ever; a floor and a limit would both be dead
 			// configuration a person still has to read and reason about.
+			//
+			// Aggregated: a busy query brings twenty in one pass, and twenty
+			// messages a pass is how a monitor gets muted. Found on 11 October
+			// 2026 adding rentals and car dealers to a real installation. One
+			// arrival in a pass still goes out as its own message — see Flush.
+			Aggregate: true,
 			Condition: Node{}, Scope: scope, Targets: targets,
 			Enabled: true, FromDefaults: true,
 		},
@@ -49,6 +55,8 @@ func DefaultsForWatch(watchID int64, targets []int64) []Rule {
 			// Enabled per decision 5. The message is prefixed «предположительно»
 			// — see internal/telegram/message.go — which is what makes an
 			// enabled-by-default removal alert honest rather than sloppy.
+			// Aggregated for the same reason as arrivals.
+			Aggregate: true,
 			Condition: Node{}, Scope: scope, Targets: targets,
 			Enabled: true, FromDefaults: true,
 		},
