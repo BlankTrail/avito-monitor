@@ -85,6 +85,16 @@ func (s *Server) collectionState(ctx context.Context, watches []store.Watch) str
 	if enabled == 0 {
 		return ""
 	}
+	// The collector's own word first. A pass timestamp cannot tell «not
+	// started» from «started and quiet», and the first is what a fresh install
+	// with a wrong key looks like.
+	if s.Collector != nil {
+		if running, why := s.Collector(); !running {
+			return `<div class="card">` + note("bad",
+				"Сбор не идёт: "+why+". Поправьте настройки или выходы — "+
+					"сбор перезапустится сам, перезапускать программу не нужно.") + `</div>`
+		}
+	}
 
 	last, err := s.Store.LastPassAt(ctx)
 	if err != nil {

@@ -54,3 +54,32 @@ func TestAPanicIsWrittenWhereThePanelReadsIt(t *testing.T) {
 		t.Errorf("the crash was attributed to watch %d", got.WatchID)
 	}
 }
+
+// TestAnExitAddedAfterStartChangesTheFingerprint, which is what makes the
+// supervisor reopen the collector instead of collecting on without it.
+func TestAnExitAddedAfterStartChangesTheFingerprint(t *testing.T) {
+	ctx := context.Background()
+	s, err := store.Open(ctx, filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	before, err := transportFingerprint(ctx, s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.SaveChannel(ctx, store.Channel{Name: "эта машина", Kind: "direct",
+		Weight: 100, Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	after, _ := transportFingerprint(ctx, s)
+	if before == after {
+		t.Error("adding an exit left the fingerprint unchanged")
+	}
+	if err := s.SetBlankTrailConfig(ctx, store.BlankTrailConfig{APIKey: "k", Ports: 2}); err != nil {
+		t.Fatal(err)
+	}
+	if again, _ := transportFingerprint(ctx, s); again == after {
+		t.Error("a new key left the fingerprint unchanged")
+	}
+}

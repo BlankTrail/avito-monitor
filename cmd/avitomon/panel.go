@@ -45,6 +45,17 @@ func panelCmd(args []string) error {
 	defer func() { _ = s.Close() }()
 
 	srv := buildPanel(s)
+	// What the screens say about collection comes from the collector itself,
+	// not from the age of the last pass: «собирает 5 из 5» over a collector
+	// that never started was the lie this replaces.
+	collecting := &collectorState{}
+	switch {
+	case *noCollect:
+		// Another process collects; this one cannot see it, and says nothing.
+	default:
+		collecting.set(false, "сбор ещё не запущен")
+		srv.Collector = collecting.State
+	}
 
 	panel, err := s.PanelSettings(ctx)
 	if err != nil {
@@ -88,18 +99,9 @@ func panelCmd(args []string) error {
 	case *noCollect:
 		fmt.Println("Сбор в этом процессе не ведётся: запущено с -no-collect.")
 	default:
-		c, err := openCollector(ctx, s, opts)
-		if err != nil {
-			// Not fatal. The panel is how somebody fixes a transport that will
-			// not open — refusing to show it would leave them with a broken
-			// install and no screen to repair it on.
-			fmt.Println("Сбор не запустился:", err)
-			fmt.Println("Панель работает — поправьте настройки и перезапустите.")
-		} else {
-			defer func() { _ = c.Close() }()
-			startCollecting(ctx, s, c)
-			fmt.Println("Сбор идёт в этом же процессе.")
-		}
+		// Supervised, so a key pasted or an exit added in the panel takes
+		// effect without a restart — see lifecycle.go.
+		go superviseCollection(ctx, s, opts, collecting)
 	}
 
 	hs := &http.Server{

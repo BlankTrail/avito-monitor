@@ -104,6 +104,10 @@ type Server struct {
 	// picked from what exists rather than typed from memory.
 	Gateways func(ctx context.Context) (blanktrail.GatewayList, error)
 
+	// Collector reports whether collection runs in this process, and if not,
+	// why. Nil when another process collects and this one cannot know.
+	Collector func() (running bool, why string)
+
 	// CheckChannel reports what one egress channel holds, or why it cannot be
 	// used. Reading a proxy list is the engine's business; this package's tests
 	// must not need a licensed service.

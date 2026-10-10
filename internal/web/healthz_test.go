@@ -141,3 +141,25 @@ func TestOneHaltedWatchGetsAGrammaticalSentence(t *testing.T) {
 		t.Errorf("одно наблюдение названо не так:\n%s", body)
 	}
 }
+
+// TestACollectorThatNeverOpenedIsNotCollecting.
+//
+// Found on 11 October 2026: a fresh install set up through the panel — mode
+// chosen, key pasted after start — whose collector had failed on «needs a key»
+// while /healthz answered «ok: собирает 5 из 5».
+func TestACollectorThatNeverOpenedIsNotCollecting(t *testing.T) {
+	s := newServer(t)
+	aWatch(t, s, "магазин")
+	s.Collector = func() (bool, string) { return false, "blanktrail mode needs a key" }
+
+	rec := get(t, s, "/healthz")
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Errorf("code = %d, want 503", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "needs a key") {
+		t.Errorf("the reason is not said:\n%s", rec.Body.String())
+	}
+	if body := get(t, s, "/").Body.String(); !strings.Contains(body, "Сбор не идёт") {
+		t.Error("the watches screen does not say collection is down")
+	}
+}

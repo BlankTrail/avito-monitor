@@ -49,6 +49,19 @@ func (s *Server) healthz(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 
+	// A collector that never opened collects nothing, whatever the watches
+	// say. Not a restart case either: it reopens when the settings change.
+	if s.Collector != nil && enabled > 0 {
+		if running, why := s.Collector(); !running {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			fmt.Fprintln(w, "не собирает: "+why)
+			fmt.Fprintln(w, "")
+			fmt.Fprintln(w, "Перезапуск не поможет: сбор откроется сам, "+
+				"когда в панели будут поправлены настройки или выходы.")
+			return
+		}
+	}
+
 	switch {
 	case enabled == 0:
 		// Nothing to collect is not a fault. An install somebody has not
