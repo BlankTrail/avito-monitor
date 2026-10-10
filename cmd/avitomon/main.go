@@ -103,6 +103,7 @@ func fetchCmd(args []string) error {
 	statePath := fs.String("state", "", "direct: where identities are persisted")
 	root := fs.String("root", "", "direct: the URL a warm-up navigates to (default: the target's origin)")
 	timeout := fs.Duration("timeout", 3*time.Minute, "the first request may be solving a challenge")
+	save := fs.String("save", "", "write the final response body to this file")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -184,9 +185,14 @@ func fetchCmd(args []string) error {
 	})
 	pacer.SetAddresses(leaser.Caps().Addresses)
 
-	f := transport.NewFetcher(leaser, pacer, transport.FetchConfig{Surface: surface})
+	f := transport.NewFetcher(leaser, pacer, transport.FetchConfig{Surface: surface, KeepBody: *save != ""})
 	res, ferr := f.Fetch(ctx, target)
 	report(res, leaser, pacer)
+	if *save != "" {
+		if err := os.WriteFile(*save, res.Body, 0o600); err != nil {
+			return err
+		}
+	}
 	return ferr
 }
 
@@ -230,8 +236,14 @@ func report(res transport.Result, leaser transport.Leaser, pacer *transport.Pace
 		if seller == "" {
 			seller = "—"
 		}
-		fmt.Printf("%3d  %-12d %14s  %-22s  %s\n",
-			i+1, l.ItemID, price, seller, l.Title)
+		// The place too: a watch on one city is only that if the page is, and
+		// the exit's own location is the thing that can quietly change it.
+		place := l.LocationName
+		if place == "" {
+			place = "—"
+		}
+		fmt.Printf("%3d  %-12d %14s  %-22s  %-16s  %s\n",
+			i+1, l.ItemID, price, seller, place, l.Title)
 	}
 }
 

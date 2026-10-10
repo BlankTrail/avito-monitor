@@ -165,6 +165,10 @@ type FetchConfig struct {
 	// MaxBody bounds what is read from one response. A search page is about
 	// 2.3 MB; anything far past that is not a page.
 	MaxBody int64
+	// KeepBody keeps the final response's bytes on every outcome, a success
+	// included. For the command-line diagnostic: a question about what the
+	// site actually sent is a question about a body nobody kept otherwise.
+	KeepBody bool
 }
 
 // Fetcher runs requests to a verdict.
@@ -316,6 +320,9 @@ func (f *Fetcher) Fetch(ctx context.Context, target string) (Result, error) {
 			continue
 		}
 
+		if f.cfg.KeepBody {
+			res.Body = body
+		}
 		doc := avito.Document{Surface: f.cfg.Surface, URL: target, Body: body}
 		page, extractErr := avito.Extract(doc, avito.Options{Now: f.cfg.Now().Unix()})
 		res.Page = page
