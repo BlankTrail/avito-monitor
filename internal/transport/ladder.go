@@ -276,7 +276,7 @@ func (f *Fetcher) Fetch(ctx context.Context, target string) (Result, error) {
 			return res, err
 		}
 		res.Attempts = attempt
-		res.Session, res.Label, res.Egress = lease.Session(), lease.Label(), lease.Egress()
+		res.Session, res.Label, res.Egress = lease.Session(), lease.Label(), PublicEgress(lease.Egress())
 
 		status, body, doErr := f.once(ctx, lease, target)
 		// carried is what earlier requests of this same answer already cost,
