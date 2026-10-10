@@ -55,10 +55,11 @@ func TestAListIsReadAndCountedWithTheFirstBadLineQuoted(t *testing.T) {
 // забанило быстрее».
 func TestTheScreenStatesWhatTheMixMeans(t *testing.T) {
 	s := newServer(t)
+	blankTrailWithPorts(t, s, 10)
 	aProxyList(t, s, "провайдер", "10.0.0.1:1080\n10.0.0.2:1080\n10.0.0.3:1080\n")
 
 	page := get(t, s, "/channels").Body.String()
-	for _, want := range []string{"3 адреса", "отолок", "орты — это не адреса"} {
+	for _, want := range []string{"3 адреса", "отолок", "орты без своих адресов"} {
 		if !strings.Contains(page, want) {
 			t.Errorf("the screen does not carry %q", want)
 		}

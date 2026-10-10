@@ -11,6 +11,7 @@ import (
 	"github.com/BlankTrail/avito-monitor/blanktrail"
 	"github.com/BlankTrail/avito-monitor/internal/ru"
 	"github.com/BlankTrail/avito-monitor/internal/store"
+	"github.com/BlankTrail/avito-monitor/internal/transport"
 )
 
 // Прокси: where the requests go out from, and the screen the pool is worthless
@@ -52,17 +53,55 @@ func (s *Server) renderChannels(w http.ResponseWriter, r *http.Request, problem 
 
 	var body strings.Builder
 
-	// The consequence of the mix, stated rather than left to be inferred.
+	// The consequence of the mix, stated rather than left to be inferred — and
+	// in the terms the collector actually uses. It said «Настроено 6 адресов»
+	// over a hundred and thirty exits and a link to fifteen thousand, because
+	// the number is the ports in use at once; a person reading it took it for
+	// the size of their lists.
+	exits, byLink := 0, 0
+	for _, c := range channels {
+		if !c.Enabled {
+			continue
+		}
+		switch c.Kind {
+		case "proxy-list":
+			if counts[c.ID] > 0 {
+				exits += counts[c.ID]
+			} else if c.Source != "" {
+				byLink++
+			}
+		case "gateway":
+			exits += max(1, len(splitNames(c.Source)))
+		default:
+			exits++
+		}
+	}
 	body.WriteString(`<div class="card">`)
-	fmt.Fprintf(&body, `<p class="sum">Настроено <strong>%d %s</strong> — `+
+	fmt.Fprintf(&body, `<p class="sum">В работе одновременно <strong>%d %s</strong> — `+
 		`потолок <strong>%s</strong> запр./мин.</p>`,
 		b.Addresses, esc(ru.Plural(b.Addresses, "адрес", "адреса", "адресов")),
 		esc(num(b.CapacityPerMin)))
-	body.WriteString(note("neutral",
-		"Сколько адресов — во столько раз выше потолок. Один адрес остаётся "+
-			"одним потолком, сколько бы портов на него ни было открыто: "+
-			"порты — это не адреса, и лишние порты только доводят до предела "+
-			"быстрее."))
+	if exits > 0 || byLink > 0 {
+		line := fmt.Sprintf("Всего выходов в запасе: %d", exits)
+		if byLink > 0 {
+			line += fmt.Sprintf(" и %d %s по ссылке", byLink,
+				ru.Plural(byLink, "список", "списка", "списков"))
+		}
+		body.WriteString(`<p>` + esc(line) + `. Сбор переходит на следующий, ` +
+			`когда выход не отвечает или подменяет сертификат.</p>`)
+	}
+	mode, _ := s.Store.TransportMode(ctx)
+	if mode == transport.ModeBlankTrail {
+		body.WriteString(note("neutral",
+			"Через BlankTrail одновременно работает столько адресов, сколько открыто "+
+				"портов (не больше, чем выходов). Каждый адрес — свой потолок; "+
+				"порты без своих адресов только доводят до предела быстрее."))
+	} else {
+		body.WriteString(note("neutral",
+			"Напрямую сбор держит одну личность и ходит с одного адреса за раз: "+
+				"остальные выходы — запасные, на них он переходит, когда текущий "+
+				"не отвечает."))
+	}
 	body.WriteString(`</div>`)
 
 	if problem != "" {
@@ -91,8 +130,14 @@ func (s *Server) channelCard(c store.Channel, addresses int) string {
 
 	switch c.Kind {
 	case "proxy-list":
-		fmt.Fprintf(&b, `<p>%d %s.</p>`, addresses,
-			esc(ru.Plural(addresses, "адрес", "адреса", "адресов")))
+		if addresses > 0 {
+			fmt.Fprintf(&b, `<p>%d %s.</p>`, addresses,
+				esc(ru.Plural(addresses, "адрес", "адреса", "адресов")))
+		} else if c.Source != "" {
+			// «0 адресов» read as «empty» over a link to fifteen thousand.
+			b.WriteString(`<p>Адреса берутся по ссылке и перечитываются раз в час; ` +
+				`сколько их, покажет «Проверить».</p>`)
+		}
 		if c.Source != "" {
 			fmt.Fprintf(&b, `<p class="hint">Источник: %s</p>`, esc(c.Source))
 		}
