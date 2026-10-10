@@ -8,6 +8,8 @@ import (
 	"flag"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -43,6 +45,12 @@ func panelCmd(args []string) error {
 		return err
 	}
 	defer func() { _ = s.Close() }()
+
+	// Names this installation on the ports it opens, so the next run can close
+	// what this one leaves behind (blanktrail/ownership.go).
+	host, _ := os.Hostname()
+	abs, _ := filepath.Abs(*dbPath)
+	blanktrail.SetOwner("avitomon", blanktrail.OwnerOf(host, abs))
 
 	srv := buildPanel(s)
 	// What the screens say about collection comes from the collector itself,

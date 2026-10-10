@@ -23,6 +23,8 @@ type Client struct {
 	base *url.URL
 	key  string
 	hc   *http.Client
+	// label goes on every port this client opens; see ownership.go.
+	label string
 }
 
 // Option customises a Client.
@@ -46,7 +48,7 @@ func NewClient(baseURL, apiKey string, opts ...Option) (*Client, error) {
 	if u.Host == "" {
 		return nil, fmt.Errorf("blanktrail: base URL %q has no host", baseURL)
 	}
-	c := &Client{base: u, key: apiKey, hc: &http.Client{Timeout: 15 * time.Second}}
+	c := &Client{base: u, key: apiKey, hc: &http.Client{Timeout: 15 * time.Second}, label: newLabel()}
 	for _, o := range opts {
 		o(c)
 	}
@@ -261,6 +263,7 @@ type openPortRequest struct {
 	AllowMITMUpstream  *bool  `json:"allow_mitm_upstream"`
 	CaptchaAction      string `json:"captcha_action,omitempty"`
 	CaptchaMaxAttempts int    `json:"captcha_max_attempts,omitempty"`
+	Label              string `json:"label,omitempty"`
 }
 
 // protocolOr defaults an unset protocol to the HTTP CONNECT forward proxy, which
@@ -332,7 +335,9 @@ func (c *Client) OpenPort(ctx context.Context, port int, spec PortSpec, eg Egres
 		Protocol string  `json:"protocol"`
 		Profile  Profile `json:"current_profile"`
 	}
-	if err := c.doJSON(ctx, http.MethodPost, "/api/v1/ports/open", spec.request(port, eg), &out); err != nil {
+	req := spec.request(port, eg)
+	req.Label = c.label
+	if err := c.doJSON(ctx, http.MethodPost, "/api/v1/ports/open", req, &out); err != nil {
 		return PortInfo{}, err
 	}
 	if out.Port == 0 {

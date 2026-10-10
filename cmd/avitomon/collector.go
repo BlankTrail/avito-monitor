@@ -103,6 +103,9 @@ func (c *collector) leaserFor(ctx context.Context, surface avito.Surface) (trans
 	return l, nil
 }
 
+// passDeadline bounds one pass, every attempt and wait included.
+const passDeadline = 10 * time.Minute
+
 // Pass reads one watch.
 //
 // A Fetcher per pass and not per process, because the surface is the watch's
@@ -116,6 +119,14 @@ func (c *collector) Pass(ctx context.Context, w store.Watch) error {
 	}
 	f := transport.NewFetcher(l, c.pacer,
 		transport.FetchConfig{Surface: w.Surface})
+	// A pass has a deadline of its own. The scheduler is sequential on
+	// purpose — one budget — so a pass that hangs holds every watch behind it.
+	// Seen on 11 October 2026: three passes after a restart, then nothing for
+	// nine minutes with the process alive and /healthz saying «собирает».
+	// Ten minutes is past the slowest measured pass (a desktop page through
+	// BlankTrail, 7 min 41 s) and far short of «for ever».
+	ctx, cancel := context.WithTimeout(ctx, passDeadline)
+	defer cancel()
 	return runOnce(ctx, c.store, f, w)
 }
 

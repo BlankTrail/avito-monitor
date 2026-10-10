@@ -7,6 +7,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/BlankTrail/avito-monitor/blanktrail"
 	"os"
 	"time"
 
@@ -300,6 +301,15 @@ func openLeaserOn(ctx context.Context, s *store.Store, mode transport.Mode,
 		}
 		if cfg.Ports <= 0 {
 			cfg.Ports = 2
+		}
+		// The ports an earlier run of this installation left open — every
+		// deploy that stops the process with Stop-Process -Force leaves a pool
+		// behind. Best effort: a service that will not list its ports is no
+		// reason to refuse to collect.
+		if cl, err := blanktrail.NewClient(cfg.ControlURL, cfg.APIKey); err == nil {
+			if n, err := cl.ReclaimLeftovers(ctx); err == nil && n > 0 {
+				fmt.Println("BlankTrail: закрыто портов, оставленных прошлым запуском:", n)
+			}
 		}
 		return bt.Open(ctx, bt.Config{
 			ControlURL: cfg.ControlURL, APIKey: cfg.APIKey,
