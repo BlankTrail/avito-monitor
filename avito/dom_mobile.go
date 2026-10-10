@@ -23,8 +23,15 @@ var mobileSpec = cardSpec{
 		return marker[len(prefix) : len(marker)-1], true
 	},
 	wantText: map[string]bool{
-		"titleLabelGrid":             true,
-		"priceLabelGrid":             true,
+		"titleLabelGrid": true,
+		"priceLabelGrid": true,
+		// The «rich» card, which the vehicle categories get: same card, same
+		// link, the title and the price under different markers. Measured on
+		// 11 October 2026 on Kazan's Toyota Camry — thirty cards read with no
+		// title and no price, because only the grid markers were asked for.
+		"titleLabelRich":             true,
+		"priceLabelRich":             true,
+		"specificationsLabelRich":    true,
 		"itemParamsGrid":             true,
 		"addressLabel":               true,
 		"sellerAndRatingSellerLabel": true,
@@ -69,7 +76,24 @@ func extractMobile(d Document) (Page, bool) {
 		}
 		page.Listings = append(page.Listings, l)
 	}
+
+	// The snippet layout: no cards in the markup, the listings in the state.
+	if page.Report.Found == 0 && len(st.Search.ScreenFeed.Items) > 0 {
+		page.Report.Rule = RuleMobileSnippet
+		page.Report.Path = PathState
+		page.Listings = decodeSnippets(st.Search.ScreenFeed.Items, &page.Report)
+	}
 	return page, true
+}
+
+// firstOf is the first non-empty string.
+func firstOf(ss ...string) string {
+	for _, s := range ss {
+		if s != "" {
+			return s
+		}
+	}
+	return ""
 }
 
 func decodeMobileCard(c cardFields, rep *ExtractionReport) (Listing, bool) {
@@ -90,10 +114,10 @@ func decodeMobileCard(c cardFields, rep *ExtractionReport) (Listing, bool) {
 	}
 	l := Listing{
 		ItemID:       id,
-		Title:        c.text("titleLabelGrid"),
+		Title:        firstOf(c.text("titleLabelGrid"), c.text("titleLabelRich")),
 		LocationName: c.text("addressLabel"),
 		SellerName:   c.text("sellerAndRatingSellerLabel"),
-		PriceLabel:   c.text("priceLabelGrid"),
+		PriceLabel:   firstOf(c.text("priceLabelGrid"), c.text("priceLabelRich")),
 		PriceKind:    PriceAbsent,
 		Price:        Money{Currency: "RUB"},
 		// SortTimeMS stays nil. Measured: without s=104 there is no date on the

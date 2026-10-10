@@ -20,7 +20,17 @@ type mobileSearchState struct {
 		Count       *int64 `json:"count"`
 		MainCount   *int64 `json:"mainCount"`
 		EmptySearch string `json:"emptySearch"`
+		// ScreenFeed is the snippet layout's listings — see snippet_mobile.go.
+		// Absent on the grid layout, which draws its cards server-side.
+		ScreenFeed struct {
+			Items []mobileFeedItem `json:"items"`
+		} `json:"screenFeed"`
 	} `json:"search"`
+}
+
+// mobileFeedItem is one element of the snippet feed: a listing, or a banner.
+type mobileFeedItem struct {
+	ItemSnippet *mobileSnippet `json:"itemSnippet"`
 }
 
 // firstJSString returns the first double-quoted JavaScript string literal in s,

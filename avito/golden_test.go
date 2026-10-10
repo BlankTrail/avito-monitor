@@ -60,6 +60,8 @@ var goldenFixtures = []string{
 	"desktop-item",
 	"mobile-search-30",
 	"mobile-search-empty",
+	"mobile-search-snippet",
+	"mobile-search-rich",
 }
 
 // TestGolden pins the whole Page for every captured page.
