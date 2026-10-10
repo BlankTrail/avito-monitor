@@ -92,6 +92,23 @@ func ticked(r *http.Request, name string) bool {
 	return v[len(v)-1] == "1"
 }
 
+// tickedOr is ticked with a default for a form that was never sent.
+//
+// checkbox() always posts its hidden «0», so a sent form carries the field
+// whether ticked or not; a page opened fresh carries nothing. The results
+// screen's «Только те, что сейчас в выдаче» had to default to on — its own hint
+// says «снимите, чтобы увидеть и то, что пропало» — and opened unticked,
+// because «absent» read as «off».
+func tickedOr(r *http.Request, name string, def bool) bool {
+	if err := r.ParseForm(); err != nil {
+		return def
+	}
+	if len(r.Form[name]) == 0 {
+		return def
+	}
+	return ticked(r, name)
+}
+
 // note renders one line of explanation, in a tone.
 //
 // tone is "neutral", "warning" or "bad". Three and not more: the panel says

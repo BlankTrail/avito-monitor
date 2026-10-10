@@ -341,7 +341,7 @@ func (s *Server) filterFrom(r *http.Request) (store.ExportFilter, error) {
 	q := r.URL.Query()
 	f := store.ExportFilter{
 		Query:       strings.TrimSpace(q.Get("q")),
-		PresentOnly: ticked(r, "present"),
+		PresentOnly: tickedOr(r, "present", true),
 	}
 	f.WatchID, _ = strconv.ParseInt(q.Get("watch"), 10, 64)
 

@@ -359,3 +359,18 @@ func TestAPriceThatIsNotANumberIsRefusedRatherThanIgnored(t *testing.T) {
 		t.Errorf("= %d (%s)", rec.Code, rec.Body.String())
 	}
 }
+
+// TestPresentOnlyIsOnWhenTheScreenFirstOpens. Its own hint says «снимите,
+// чтобы увидеть и то, что пропало»; it opened unticked.
+func TestPresentOnlyIsOnWhenTheScreenFirstOpens(t *testing.T) {
+	s := newServer(t)
+	body := get(t, s, "/results").Body.String()
+	if !strings.Contains(body, `name="present" value="1" checked`) {
+		t.Error("«Только те, что сейчас в выдаче» opens unticked")
+	}
+	// And a sent form with it unticked stays unticked.
+	body = get(t, s, "/results?present=0").Body.String()
+	if strings.Contains(body, `name="present" value="1" checked`) {
+		t.Error("unticking it did not stick")
+	}
+}
