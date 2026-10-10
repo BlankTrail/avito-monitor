@@ -96,22 +96,25 @@ func TestChallengeOutranksThrottling(t *testing.T) {
 }
 
 // TestRemedies pins what each class asks for, because the ladder reads this and
-// nothing else. Rotation is reachable from exactly one class.
+// nothing else. Rotation is reachable from exactly two classes: the 429, and an
+// exit that never carried the request to the site.
 func TestRemedies(t *testing.T) {
 	all := []Class{ClassOK, ClassEmpty, ClassShape, ClassSoftBlock, ClassCold,
-		ClassThrottled, ClassBurned, ClassChallenge, ClassMangled, ClassOther}
+		ClassThrottled, ClassBurned, ClassChallenge, ClassMangled, ClassBadExit,
+		ClassOther}
 	rotates := 0
 	for _, c := range all {
 		if c.Remedy() == RemedyRotateEgress {
 			rotates++
-			if c != ClassThrottled {
-				t.Errorf("%q asks to rotate the egress; only ClassThrottled may, "+
-					"because rotation destroys a clearance worth 19-23 seconds", c)
+			if c != ClassThrottled && c != ClassBadExit {
+				t.Errorf("%q asks to rotate the egress; only a 429 and a dead "+
+					"exit may, because rotation destroys a clearance worth "+
+					"19-23 seconds and only those two have none to lose", c)
 			}
 		}
 	}
-	if rotates != 1 {
-		t.Errorf("%d classes rotate the egress, want exactly 1", rotates)
+	if rotates != 2 {
+		t.Errorf("%d classes rotate the egress, want exactly 2", rotates)
 	}
 	if ClassShape.Remedy() != RemedyNone {
 		t.Errorf("ClassShape.Remedy() = %v; repeating a request whose payload we "+
@@ -140,15 +143,14 @@ func TestRemedies(t *testing.T) {
 		t.Errorf("ClassSoftBlock.Remedy() = %v, want RemedyRecycle",
 			ClassSoftBlock.Remedy())
 	}
-	// Rotation stays reachable from exactly one class. The 429 is what a
-	// different address fixes; nothing else is.
+	// Rotation stays reachable from those two classes and no others.
 	for _, c := range []Class{
 		ClassOK, ClassEmpty, ClassShape, ClassBurned, ClassSoftBlock,
 		ClassCold, ClassChallenge, ClassMangled, ClassOther,
 	} {
 		if c.Remedy() == RemedyRotateEgress {
-			t.Errorf("%q.Remedy() = RemedyRotateEgress; only a 429 is fixed by "+
-				"a different address", c)
+			t.Errorf("%q.Remedy() = RemedyRotateEgress; only a 429 and a dead "+
+				"exit are fixed by a different address", c)
 		}
 	}
 	if ClassThrottled.Remedy() != RemedyRotateEgress {
@@ -289,5 +291,25 @@ func TestAColdRefusalStillWarmsUpEvenIfItLooksLikeACaptcha(t *testing.T) {
 		t.Errorf("class = %q on an unwarmed identity, want %q — the warm-up is "+
 			"the first thing to try, and it is a root navigation that may "+
 			"clear this by itself", v.Class, ClassCold)
+	}
+}
+
+// TestBlankTrailsExitRefusalsAreNotMangledBodies.
+//
+// Measured on 11 October 2026: residential exits answered 525 and a provider's
+// list 526, and both were filed ClassMangled because BlankTrail's body is an
+// English sentence with no Cyrillic in it. Mangled means one re-dial on the same
+// exit — which cannot help an exit that is down or intercepting.
+func TestBlankTrailsExitRefusalsAreNotMangledBodies(t *testing.T) {
+	for _, status := range []int{523, 525, 526} {
+		v := Classify(Input{Status: status, Doc: doc("upstream TLS handshake failed")})
+		if v.Class != ClassBadExit {
+			t.Errorf("%d -> %q, want ClassBadExit", status, v.Class)
+		}
+	}
+	// A plain 503 is BlankTrail's port-connection limit: the exit is fine, and
+	// moving off it would punish an address for somebody else's load.
+	if v := Classify(Input{Status: 503, Doc: doc("x")}); v.Class == ClassBadExit {
+		t.Error("503 filed as a dead exit")
 	}
 }

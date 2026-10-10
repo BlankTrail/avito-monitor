@@ -21,6 +21,7 @@ const (
 	ClassBurned    Class = "burned"    // 403: this identity is finished here
 	ClassChallenge Class = "challenge" // 439, or a captcha marker anywhere
 	ClassMangled   Class = "mangled"   // the bytes are not what they claim to be
+	ClassBadExit   Class = "bad-exit"  // the exit could not carry the request at all
 	ClassOther     Class = "other"
 )
 
@@ -76,6 +77,13 @@ func (c Class) Remedy() Remedy {
 		return RemedyWarmUp
 	case ClassThrottled:
 		return RemedyRotateEgress
+	case ClassBadExit:
+		// The second class a different address fixes, and the argument against
+		// rotation does not reach it. Rotation is withheld elsewhere because it
+		// throws away a clearance that was working; an exit that answered 523,
+		// 525 or 526 never carried a request to the site, so there is no
+		// clearance on it to lose.
+		return RemedyRotateEgress
 	case ClassChallenge:
 		// The ladder decides between repeating on the same identity and
 		// halting, and it decides from Caps.SolvesChallenges. This table does
@@ -124,6 +132,21 @@ var captchaLabels = map[string]bool{
 // Classify turns one response plus its extraction into one verdict.
 func Classify(in Input) Verdict {
 	wall, hasWall := in.Doc.Wall()
+
+	// BlankTrail's own three refusals, which the site never sends. Its
+	// internal/proxy states them exactly: 523 the exit is unreachable, 525 the
+	// exit is up but TLS with the site did not complete, 526 the exit presents
+	// a certificate that is not the site's — an intercepting proxy, which the
+	// port refuses to tunnel through. Checked first, because the body is
+	// BlankTrail's English sentence and would otherwise land in ClassMangled
+	// for carrying no Cyrillic — which is what it did, measured on 11 October
+	// 2026: a list of residential exits answered 525 twice and a provider's
+	// list 526 twice, both filed as «the bytes are not what they claim», both
+	// retried on the same dead exit and given up on.
+	switch in.Status {
+	case 523, 525, 526:
+		return Verdict{ClassBadExit, avito.WallHit{}, badExitDetail(in.Status)}
+	}
 
 	// 439 is Avito's own challenge status and appears in no RFC.
 	if in.Status == 439 {
@@ -201,4 +224,14 @@ func Classify(in Input) Verdict {
 		return Verdict{ClassSoftBlock, wall, "2xx with nothing recognisable in it"}
 	}
 	return Verdict{ClassOther, wall, "unhandled status"}
+}
+
+func badExitDetail(status int) string {
+	switch status {
+	case 523:
+		return "exit unreachable"
+	case 525:
+		return "exit up, TLS with the site did not complete"
+	}
+	return "exit presents a certificate that is not the site's"
 }

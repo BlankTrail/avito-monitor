@@ -32,7 +32,21 @@ const (
 )
 
 // maxAttempts bounds one Fetch however the remedies fall out.
-const maxAttempts = 6
+//
+// Raised from six to twelve with ClassBadExit. On a real list four exits in
+// five can be intercepting (measured 11 October 2026), and six attempts left a
+// fair chance of every one of them landing on a bad exit. Every other branch
+// still bounds itself well inside this.
+const maxAttempts = 12
+
+// exitBudget is how many exits one fetch may walk past.
+func (f *Fetcher) exitBudget() int {
+	n := f.leaser.Caps().Addresses
+	if n < 1 {
+		n = 1
+	}
+	return min(n, maxAttempts-2)
+}
 
 // blockWait is what a 403 costs. Measured: recovery tracks the number of these
 // and nothing else, so it is the whole remedy rather than an accompaniment to
@@ -274,6 +288,18 @@ func (f *Fetcher) Fetch(ctx context.Context, target string) (Result, error) {
 			// A transport error is not a verdict about the target. One re-dial,
 			// then give up: a connection that will not open twice is not going
 			// to open on the third try either.
+			//
+			// Unless there is another exit to try. A connection that will not
+			// open through one proxy says nothing about the next, and on a real
+			// list most failures are exactly that: an exit that is down or
+			// intercepting. Rotation here costs no clearance, because nothing
+			// reached the site.
+			if f.leaser.Caps().RotatesEgress && rotations < f.exitBudget() {
+				rotations++
+				if err := lease.RotateEgress(ctx); err == nil {
+					continue
+				}
+			}
 			if attempt >= 2 {
 				return res, doErr
 			}
@@ -498,6 +524,21 @@ func (f *Fetcher) Fetch(ctx context.Context, target string) (Result, error) {
 		case ClassMangled:
 			res.Body = body
 			if attempt >= 2 {
+				return res, nil
+			}
+
+		case ClassBadExit:
+			// The exit did not carry the request: BlankTrail said it is down,
+			// could not finish TLS with the site, or is intercepting. Move to
+			// the next one. Unlike a 429 this never halts the watch — nothing
+			// here is about the site, and a halt is a person's problem to clear.
+			// With nowhere left to move, the pass ends with the verdict and the
+			// next tick starts on a fresh exit.
+			if !f.leaser.Caps().RotatesEgress || rotations >= f.exitBudget() {
+				return res, nil
+			}
+			rotations++
+			if err := lease.RotateEgress(ctx); err != nil {
 				return res, nil
 			}
 

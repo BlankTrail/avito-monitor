@@ -146,12 +146,58 @@ func (l *Leaser) Acquire(ctx context.Context) (transport.Lease, error) {
 		return nil, err
 	}
 	if s.needsWarmUp() && l.cfg.Root != "" {
-		if err := s.warmUp(ctx, l.cfg.Root); err != nil {
+		if err := l.warmOnSomeExit(ctx, s); err != nil {
 			l.give(s)
 			return nil, err
 		}
 	}
 	return &sessionLease{s: s, l: l}, nil
+}
+
+// maxExitTries bounds how many configured addresses one warm-up may walk.
+//
+// Enough to get past the bad stretch of a real list and no more. Measured on
+// 11 October 2026 against a provider's list of fifteen thousand: four exits in
+// five presented a forged *.avito.ru certificate signed by «None, LLC, Dallas»,
+// so the expected walk to a clean one is a handful, and walking all fifteen
+// thousand on one Acquire would be a scan nobody asked for.
+const maxExitTries = 12
+
+// warmOnSomeExit warms the session up, and if the exit it is on cannot carry
+// the request at all, moves to the next configured address and tries there.
+//
+// Before this a single bad address killed collection: the warm-up runs before
+// the ladder, its error went straight back to the pass, and the ladder's own
+// rotation never got a chance to run. On the list above that was four passes in
+// five failing on «certificate signed by unknown authority» — correctly refused,
+// and then never retried anywhere else.
+//
+// Every warm-up failure is treated as the exit's fault, and that is not a
+// guess: the warm-up is a plain navigation to the site's front page, which the
+// site answers on every address that can reach it. What does not come back is
+// a dial that failed, a proxy that refused, or a certificate that was not the
+// site's — all three properties of the exit. With one address there is nowhere
+// to move and the error stands as it did.
+func (l *Leaser) warmOnSomeExit(ctx context.Context, s *session) error {
+	err := s.warmUp(ctx, l.cfg.Root)
+	if err == nil || len(l.cfg.Upstreams) < 2 {
+		return err
+	}
+	tries := min(len(l.cfg.Upstreams)-1, maxExitTries)
+	for i := 0; i < tries && err != nil; i++ {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		lease := &sessionLease{s: s, l: l}
+		if rerr := lease.RotateEgress(ctx); rerr != nil {
+			return err
+		}
+		err = s.warmUp(ctx, l.cfg.Root)
+	}
+	if err != nil {
+		return fmt.Errorf("%w (tried %d exits)", err, tries+1)
+	}
+	return nil
 }
 
 func (l *Leaser) take(ctx context.Context) (*session, error) {
