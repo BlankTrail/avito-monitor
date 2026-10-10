@@ -85,3 +85,22 @@ type Leaser interface {
 	Caps() Caps
 	Close() error
 }
+
+// ExitJudge is what a lease may add when its transport can say whose fault a
+// failed request was.
+//
+// BlankTrail can: a port that could not carry a request answers with its own
+// refusal and a reason, and the reasons split cleanly into «this exit is
+// dead or intercepting — strike it» and «the exit is fine, the trouble is
+// elsewhere — move on without punishing it». Collapsing the two either way is
+// wrong on a real list: striking for the service's own TLS defect empties a
+// good list, and never striking keeps a dead exit on its port for ever.
+//
+// Optional, because the direct transport has no such vocabulary: a dial that
+// failed through a proxy is all it ever learns.
+type ExitJudge interface {
+	// BlamesExit reports whether err is the current exit's fault.
+	BlamesExit(err error) bool
+	// RejectEgress strikes the current exit and moves to another.
+	RejectEgress(ctx context.Context) error
+}

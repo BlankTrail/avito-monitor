@@ -41,7 +41,10 @@ const maxAttempts = 12
 
 // exitBudget is how many exits one fetch may walk past.
 func (f *Fetcher) exitBudget() int {
-	n := f.leaser.Caps().Addresses
+	n := f.leaser.Caps().Exits
+	if n < 1 {
+		n = f.leaser.Caps().Addresses
+	}
 	if n < 1 {
 		n = 1
 	}
@@ -296,7 +299,14 @@ func (f *Fetcher) Fetch(ctx context.Context, target string) (Result, error) {
 			// reached the site.
 			if f.leaser.Caps().RotatesEgress && rotations < f.exitBudget() {
 				rotations++
-				if err := lease.RotateEgress(ctx); err == nil {
+				move := lease.RotateEgress
+				// Strike the exit only when the transport says it was the
+				// exit. BlankTrail's refusals name it; a plain dial error
+				// through a proxy cannot, and moving on is all it earns.
+				if j, ok := lease.(ExitJudge); ok && j.BlamesExit(doErr) {
+					move = j.RejectEgress
+				}
+				if err := move(ctx); err == nil {
 					continue
 				}
 			}

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/rand/v2"
 	"net/http"
 	"sort"
 	"strings"
@@ -32,6 +33,19 @@ const (
 // changed on demand. A caller seeing it should stop asking and quarantine the
 // port instead of retrying forever.
 var ErrRenewUnsupported = errors.New("blanktrail: this channel cannot change its egress IP")
+
+// ErrRenewTooSoon is returned by Renew when the provider's own minimum interval
+// between address changes has not elapsed. Nothing was changed and nothing was
+// asked of the provider.
+//
+// It wraps ErrRenewUnsupported deliberately: from the caller's side the two say
+// the same thing — this port's exit address is not going to move — and the
+// remedy for both is the same, which is to replace everything else the target
+// can see rather than the address. Returned as a plain nil, as it was, a skipped
+// rotation was indistinguishable from a real one: the caller counted it, the
+// port's session was bumped for an identity that had not changed, and the
+// failure text told an operator about «смен выхода» that never happened.
+var ErrRenewTooSoon = fmt.Errorf("%w: the provider's minimum interval has not elapsed", ErrRenewUnsupported)
 
 // Channel is a source of egress addresses for proxy ports.
 type Channel interface {
@@ -154,7 +168,10 @@ func (c *rotatingChannel) Renew(ctx context.Context, cur Egress) (Egress, error)
 	now := c.now()
 	if c.everHit && now.Sub(c.lastHit) < c.minInterval {
 		c.mu.Unlock()
-		return cur, nil // too soon; the provider would refuse or silently ignore it
+		// Skipped rather than queued — the provider would refuse or silently
+		// ignore it — and said out loud, because a skip that reads as a
+		// rotation is a rotation the caller then acts on.
+		return cur, ErrRenewTooSoon
 	}
 	c.lastHit, c.everHit = now, true
 	c.mu.Unlock()
@@ -191,6 +208,24 @@ type gatewayChannel struct {
 	mu    sync.Mutex
 	pos   int
 	fails map[string]int
+
+	// bench, when set, replaces fails: see Bench.
+	bench *Bench
+}
+
+// startAt is where a fresh rotation over n exits begins.
+//
+// Drawn, not zero. Every job builds its channels afresh, and starting each at
+// the head of the list put the first port of every job on the same exit — the
+// port a pool hands out first, since it is the coldest. Measured with three
+// jobs running together: all three first ports on one gateway, and when that
+// gateway hung, every job's first request hung with it while thirteen others
+// idled. A variable so a test that needs the old order can have it.
+var startAt = func(n int) int {
+	if n < 2 {
+		return 0
+	}
+	return rand.IntN(n)
 }
 
 // NewGatewayChannel egresses through BlankTrail gateway configs, by name.
@@ -207,12 +242,24 @@ type gatewayChannel struct {
 // egress with no gateway in it, which is the host's own address wearing the
 // name of a VPN — the one mistake this whole package exists to make impossible.
 func NewGatewayChannel(name string, gateways ...string) Channel {
-	c := &gatewayChannel{name: name, fails: map[string]int{}}
+	return newGatewayChannel(name, gateways, nil)
+}
+
+// NewGatewayChannelOn is NewGatewayChannel with its failure record kept on b —
+// see Bench — so a gateway that keeps failing rests for b's rest, and the
+// record outlives this channel.
+func NewGatewayChannelOn(b *Bench, name string, gateways ...string) Channel {
+	return newGatewayChannel(name, gateways, b)
+}
+
+func newGatewayChannel(name string, gateways []string, b *Bench) Channel {
+	c := &gatewayChannel{name: name, fails: map[string]int{}, bench: b}
 	for _, g := range gateways {
 		if g = strings.TrimSpace(g); g != "" {
 			c.gws = append(c.gws, g)
 		}
 	}
+	c.pos = startAt(len(c.gws))
 	return c
 }
 
@@ -225,6 +272,23 @@ func (c *gatewayChannel) Next() (Egress, bool) {
 	n := len(c.gws)
 	if n == 0 {
 		return Egress{}, false
+	}
+	if c.bench != nil {
+		keys := make([]string, n)
+		for i, g := range c.gws {
+			keys[i] = GatewayKey(g)
+		}
+		free := c.bench.available(keys)
+		for range n {
+			g := c.gws[c.pos%n]
+			c.pos = (c.pos + 1) % n
+			if free[GatewayKey(g)] {
+				return Egress{Gateway: g}, true
+			}
+		}
+		g := c.gws[c.pos%n]
+		c.pos = (c.pos + 1) % n
+		return Egress{Gateway: g}, true
 	}
 	for range n {
 		g := c.gws[c.pos%n]
@@ -253,6 +317,10 @@ func (c *gatewayChannel) Renew(_ context.Context, cur Egress) (Egress, error) {
 }
 
 func (c *gatewayChannel) MarkBad(eg Egress) {
+	if c.bench != nil {
+		c.bench.MarkBad(GatewayKey(eg.Gateway))
+		return
+	}
 	// Counted by name, whatever the name is. A name that is not in the set is a
 	// counter nothing ever reads, and screening for it here would be a second
 	// place deciding what this channel holds — the constructor is the first.
@@ -265,6 +333,15 @@ func (c *gatewayChannel) Close() {}
 
 // directChannel egresses from the host's own IP.
 type directChannel struct{ name string }
+
+// DirectChannelName is what a pool calls the channel it makes for itself when
+// the caller configured none.
+//
+// Exported because the name reaches a screen: PortReport.Channel is never
+// empty, so a consumer that wants to render «прямое соединение» in its own
+// words has to be able to recognise this one — and a magic string copied into
+// another package is a string that drifts.
+const DirectChannelName = "direct"
 
 // NewDirectChannel egresses from the host's own IP.
 func NewDirectChannel(name string) Channel {

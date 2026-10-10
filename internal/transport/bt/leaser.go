@@ -136,6 +136,7 @@ func Open(ctx context.Context, cfg Config) (*Leaser, error) {
 			SolvesChallenges: true,
 			RotatesEgress:    rotates,
 			Addresses:        addresses(cfg.Ports, cfg.Addresses, rotates),
+			Exits:            cfg.Addresses,
 		},
 		prof: transport.Profile{OwnedByProxy: true, Surface: cfg.Surface},
 	}, nil
@@ -234,3 +235,9 @@ func (p *portLease) Profile() transport.Profile { return p.prof }
 // target needs — the cold state this reports on is a property of a jar this
 // program manages, and in this mode it manages none.
 func (p *portLease) Warm() bool { return true }
+
+// BlamesExit reads the port's refusal, when the error is one.
+func (l *portLease) BlamesExit(err error) bool {
+	ref, ok := blanktrail.Refusal(err)
+	return ok && ref.BlamesExit()
+}

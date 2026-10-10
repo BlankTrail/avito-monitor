@@ -4,6 +4,8 @@ package blanktrail
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"net"
@@ -38,8 +40,24 @@ func (u Upstream) URL() string {
 	return uu.String()
 }
 
-// Key identifies an upstream by scheme and address, ignoring credentials.
-func (u Upstream) Key() string { return u.Scheme + "|" + net.JoinHostPort(u.Host, u.Port) }
+// Key identifies an upstream by scheme, address and credentials, without
+// spelling the credentials out.
+//
+// It used to be scheme and address alone, on the reading that one host and port
+// is one machine. Residential and mobile providers sell one host and port and
+// pick the exit by the login — a session number in the user name — so a list of
+// a hundred sessions was one key: a dead session could never rest on its own,
+// and three failures anywhere benched the list (seen on a real list,
+// 09.10.2026). The credentials go in as a short hash, because the key is what
+// the bench writes to the database, and passwords are kept out of it.
+func (u Upstream) Key() string {
+	k := u.Scheme + "|" + net.JoinHostPort(u.Host, u.Port)
+	if u.User == "" && u.Pass == "" {
+		return k
+	}
+	sum := sha256.Sum256([]byte(u.User + "\x00" + u.Pass))
+	return k + "|" + hex.EncodeToString(sum[:6])
+}
 
 var validSchemes = map[string]bool{
 	"http": true, "https": true,
@@ -118,7 +136,7 @@ func parseLine(line, defaultScheme string) (Upstream, error) {
 		return newUpstream(scheme, parts[0], parts[1], parts[2], parts[3])
 	}
 
-	return Upstream{}, fmt.Errorf("cannot parse %q", line)
+	return Upstream{}, fmt.Errorf("cannot parse %q", Redact(line))
 }
 
 // splitHostPort accepts host:port and [ipv6]:port; it rejects anything with
@@ -172,7 +190,7 @@ func (s Source) Load(ctx context.Context) (ups []Upstream, bad []string, err err
 		return nil, nil, fmt.Errorf("blanktrail: unknown upstream source kind %q", s.Kind)
 	}
 	if err != nil {
-		return nil, nil, fmt.Errorf("blanktrail: load upstreams from %s %q: %w", s.Kind, s.Location, err)
+		return nil, nil, fmt.Errorf("blanktrail: load upstreams from %s %q: %w", s.Kind, Redact(s.Location), err)
 	}
 	ups, bad = Parse(string(raw), s.DefaultScheme)
 	return ups, bad, nil
@@ -204,6 +222,9 @@ type Rotor struct {
 	fails    map[string]int
 	maxFails int
 
+	// bench, when set, replaces fails and maxFails: see Bench.
+	bench *Bench
+
 	src  Source
 	stop chan struct{}
 	done chan struct{}
@@ -211,22 +232,39 @@ type Rotor struct {
 	closeOnce sync.Once
 }
 
+// RotorOption customises a Rotor.
+type RotorOption func(*Rotor)
+
+// WithBench has the rotor keep its failure record on b rather than on its own:
+// an exit rests there for b's rest and then comes back, and the record is
+// shared with every other channel handed the same Bench.
+func WithBench(b *Bench) RotorOption {
+	return func(r *Rotor) { r.bench = b }
+}
+
 // NewStaticRotor rotates over a fixed list with no background refresh.
-func NewStaticRotor(ups []Upstream) *Rotor {
-	return &Rotor{ups: ups, fails: map[string]int{}, maxFails: 3}
+func NewStaticRotor(ups []Upstream, opts ...RotorOption) *Rotor {
+	r := &Rotor{ups: ups, fails: map[string]int{}, maxFails: 3}
+	for _, o := range opts {
+		o(r)
+	}
+	return r
 }
 
 // NewRotor loads the source once and, if Source.Refresh > 0, starts a
 // background reloader. Call Close to stop it.
-func NewRotor(ctx context.Context, src Source) (*Rotor, error) {
+func NewRotor(ctx context.Context, src Source, opts ...RotorOption) (*Rotor, error) {
 	ups, _, err := src.Load(ctx)
 	if err != nil {
 		return nil, err
 	}
 	if len(ups) == 0 {
-		return nil, fmt.Errorf("blanktrail: upstream source %q yielded no usable proxies", src.Location)
+		return nil, fmt.Errorf("blanktrail: upstream source %q yielded no usable proxies", Redact(src.Location))
 	}
-	r := &Rotor{ups: ups, fails: map[string]int{}, maxFails: 3, src: src}
+	r := &Rotor{ups: ups, fails: map[string]int{}, maxFails: 3, src: src, pos: startAt(len(ups))}
+	for _, o := range opts {
+		o(r)
+	}
 	if src.Refresh > 0 {
 		r.stop = make(chan struct{})
 		r.done = make(chan struct{})
@@ -251,6 +289,25 @@ func (r *Rotor) Next() (Upstream, bool) {
 	if n == 0 {
 		return Upstream{}, false
 	}
+	if r.bench != nil {
+		keys := make([]string, n)
+		for i, u := range r.ups {
+			keys[i] = u.Key()
+		}
+		free := r.bench.available(keys)
+		for i := 0; i < n; i++ {
+			u := r.ups[r.pos%n]
+			r.pos = (r.pos + 1) % n
+			if free[u.Key()] {
+				return u, true
+			}
+		}
+		// Not reached: available always frees at least one of a non-empty
+		// set. Kept so a fault there costs a rested exit, not a stalled run.
+		u := r.ups[r.pos%n]
+		r.pos = (r.pos + 1) % n
+		return u, true
+	}
 	for i := 0; i < n; i++ {
 		u := r.ups[r.pos%n]
 		r.pos = (r.pos + 1) % n
@@ -269,6 +326,12 @@ func (r *Rotor) Next() (Upstream, bool) {
 // MarkBad records a connection-level failure for an upstream. After maxFails it
 // is skipped until the list is reloaded (or all upstreams burn out).
 func (r *Rotor) MarkBad(u Upstream) {
+	if r.bench != nil {
+		// Without r.mu: the bench has its own lock, and its callback may write
+		// to a database — every Next on this rotor would wait for that write.
+		r.bench.MarkBad(u.Key())
+		return
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.fails[u.Key()]++

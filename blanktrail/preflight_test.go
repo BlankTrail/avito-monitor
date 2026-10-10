@@ -97,15 +97,14 @@ func TestPreflight_ChallengeBreakerMissingIsFatal(t *testing.T) {
 }
 
 func TestPreflight_DoesNotWarnWhenPortsOutnumberSolverProcesses(t *testing.T) {
-	// This used to warn, on a model of one solve per solver process. A process
-	// carries several context windows and solves in several at once, and what
-	// overflows queues rather than fails, so ports outnumbering processes is an
-	// ordinary configuration and not a finding. A run that was fine collected a
-	// warning here, which teaches the reader to skip past this report.
+	// This used to warn, on a model of one port per solver process. The two are
+	// not one to one, so ports outnumbering processes is an ordinary
+	// configuration and not a finding. A run that was fine collected a warning
+	// here, which teaches the reader to skip past this report.
 	//
 	// It is not replaced by a warning with a bigger multiplier, because the
-	// control API reports no number of concurrent solves per process to compute
-	// one from — see challengeBreakerFinding's own comment.
+	// control API reports nothing to compute a ratio from — see
+	// challengeBreakerFinding's own comment.
 	c, fake := newTestClient(t)
 	fake.SetCA(genTestCA(t))
 	fake.SetLicense(fakebt.License{
@@ -214,4 +213,24 @@ func genTestCA(t *testing.T) []byte {
 		t.Fatalf("create certificate: %v", err)
 	}
 	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+}
+
+func TestPreflight_AWrongKeyIsTheKeyEvenWhenHealthAnswersWithoutOne(t *testing.T) {
+	// The live service answers /health with no key at all, so a wrong key is
+	// first refused by the licence call. It used to be reported as «could not
+	// read the licence status — check that the licence is activated», which
+	// sends somebody to an activation that is fine.
+	fake := fakebt.New(t)
+	c, _ := NewClient(fake.URL(), "wrong")
+
+	if err := c.Health(context.Background()); err != nil {
+		t.Fatalf("health with a wrong key = %v; the fake must answer it as the service does", err)
+	}
+	rep := Preflight(context.Background(), c, PreflightInput{Ports: 1})
+	if _, ok := rep.Find("unauthorized"); !ok {
+		t.Fatalf("no \"unauthorized\" finding; got %+v", rep.Findings)
+	}
+	if _, ok := rep.Find("license_unreadable"); ok {
+		t.Error("a refused key is reported as an unreadable licence")
+	}
 }

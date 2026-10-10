@@ -141,9 +141,12 @@ func TestClient_UnauthorizedIsTyped(t *testing.T) {
 		t.Fatalf("NewClient: %v", err)
 	}
 
-	err = c.Health(context.Background())
+	// The licence and not health: the live service answers /health with no
+	// key at all (200 with none and with a wrong one), and refuses the first
+	// call that needs one.
+	_, err = c.LicenseStatus(context.Background())
 	if err == nil {
-		t.Fatal("Health with a wrong key returned nil error")
+		t.Fatal("LicenseStatus with a wrong key returned nil error")
 	}
 	if !IsUnauthorized(err) {
 		t.Errorf("IsUnauthorized(%v) = false, want true", err)
@@ -204,3 +207,28 @@ func TestAPIError_MessageFallsBackToBody(t *testing.T) {
 }
 
 func errorsAs(err error, target any) bool { return errors.As(err, target) }
+
+func TestDefaultPortSpec_GivesUpOnADeadExitInSeconds(t *testing.T) {
+	// On a cheap list half the addresses do not answer at all. Without a
+	// connect timeout of its own the port waited the service's default on each
+	// of them, and 500 threads over 15 000 server proxies made three pages a
+	// second (09.10.2026). Google Parser asks for five seconds; so does this.
+	req := DefaultPortSpec().request(20000, Egress{Upstream: "socks5://10.0.0.1:1080"})
+	if req.ConnectTimeout == nil || *req.ConnectTimeout != 5 {
+		t.Errorf("connect_timeout_seconds = %v, want 5", req.ConnectTimeout)
+	}
+}
+
+func TestPortSpec_RefusesAnExitThatInterceptsTLS(t *testing.T) {
+	// Such an exit replaces the browser fingerprint with its own. Left to the
+	// service's default, a changed default would have broken it unseen.
+	for _, eg := range []Egress{{Upstream: "socks5://10.0.0.1:1080"}, {Gateway: "gw"}, {}} {
+		raw, err := json.Marshal(DefaultPortSpec().request(20000, eg))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(raw), `"allow_mitm_upstream":false`) {
+			t.Errorf("egress %+v: request %s does not say allow_mitm_upstream: false", eg, raw)
+		}
+	}
+}

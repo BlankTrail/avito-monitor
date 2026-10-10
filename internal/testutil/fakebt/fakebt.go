@@ -63,12 +63,18 @@ type Server struct {
 	mu       sync.Mutex
 	license  License
 	gateways []Gateway
-	ca       []byte
-	ports    map[int]string // port -> upstream
-	rotates  map[int]int
-	fails    map[string][]failure
-	seen     []Recorded
-	nextPort int
+	// egressFails is the exits the egress check refuses, by proxy address or
+	// gateway name, with the reason each is refused for.
+	egressFails map[string]string
+	// egressSkips is the exits the check reports as skipped — what the service
+	// answers for a check a tariff does not include.
+	egressSkips map[string]bool
+	ca          []byte
+	ports       map[int]string // port -> upstream
+	rotates     map[int]int
+	fails       map[string][]failure
+	seen        []Recorded
+	nextPort    int
 }
 
 // New starts a fake control API and registers its shutdown with t.
@@ -105,6 +111,64 @@ func (s *Server) SetLicense(l License) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.license = l
+}
+
+// FailEgress makes the egress check refuse one exit — a proxy address or a
+// gateway name — with detail. Everything not named goes on passing.
+//
+// Named rather than a global switch, because what the caller reports is «первый
+// отказ: адрес — причина», and a test of that needs a list where some answer
+// and some do not.
+func (s *Server) FailEgress(exit, detail string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.egressFails == nil {
+		s.egressFails = map[string]string{}
+	}
+	s.egressFails[exit] = detail
+}
+
+// SkipEgress makes the egress check report one exit as skipped — what the
+// service answers for a check a tariff does not include.
+func (s *Server) SkipEgress(exit string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.egressSkips == nil {
+		s.egressSkips = map[string]bool{}
+	}
+	s.egressSkips[exit] = true
+}
+
+func (s *Server) serveEgressTest(w http.ResponseWriter, body []byte) {
+	var req struct {
+		Upstream string `json:"upstream"`
+		Gateway  string `json:"upstream_gateway"`
+	}
+	_ = json.Unmarshal(body, &req)
+
+	s.mu.Lock()
+	detail, failed := s.egressFails[req.Upstream]
+	if !failed {
+		detail, failed = s.egressFails[req.Gateway]
+	}
+	skipped := s.egressSkips[req.Upstream] || s.egressSkips[req.Gateway]
+	s.mu.Unlock()
+
+	if skipped {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"leak": map[string]any{"ok": false, "skipped": true, "detail": "not in this plan"},
+		})
+		return
+	}
+	if failed {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"http": map[string]any{"ok": false, "detail": detail},
+		})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"http": map[string]any{"ok": true, "detail": "direct"},
+	})
 }
 
 // SetGateways replaces the gateway list.
@@ -193,7 +257,12 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mu.Unlock()
 
-	if r.Header.Get("X-API-Key") != s.key {
+	// Health answers without a key, as the real service does — measured on a
+	// live instance: a wrong key got 200 from /health and 401 from the
+	// licence. This fake used to refuse health too, which was stricter than
+	// the thing it stands in for and hid a preflight that blamed the licence
+	// for a key BlankTrail had never accepted.
+	if r.URL.Path != "/api/v1/health" && r.Header.Get("X-API-Key") != s.key {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "authentication required"})
 		return
 	}
@@ -216,9 +285,7 @@ func (s *Server) route(w http.ResponseWriter, r *http.Request) {
 	case "/api/v1/ports/close":
 		s.serveClose(w, body)
 	case "/api/v1/upstream/test":
-		writeJSON(w, http.StatusOK, map[string]any{
-			"http": map[string]any{"ok": true, "detail": "direct"},
-		})
+		s.serveEgressTest(w, body)
 	default:
 		s.servePortScoped(w, r, body)
 	}
@@ -285,13 +352,25 @@ func (s *Server) serveCA(w http.ResponseWriter) {
 	_, _ = w.Write(ca)
 }
 
+// serveSuggest answers with the lowest number this service does not itself
+// hold — and answers with the same one every time until somebody opens it.
+//
+// That repetition is the service's real behaviour, checked against a live one:
+// five asks in a row returned the same port. This fake used to advance its
+// counter on every ask instead, which was more helpful than the thing it stands
+// in for and hid a real defect completely — a pool whose open failed kept the
+// number claimed on its own side, asked again, and was handed the same number
+// forever, then reported «could not find enough free ports» with a thousand of
+// them free. Against this fake that path could not happen.
 func (s *Server) serveSuggest(w http.ResponseWriter) {
 	s.mu.Lock()
-	for s.ports[s.nextPort] != "" || s.nextPort == 0 {
-		s.nextPort++
-	}
 	p := s.nextPort
-	s.nextPort++
+	if p == 0 {
+		p = 1
+	}
+	for _, open := s.ports[p]; open || p == 0; _, open = s.ports[p] {
+		p++
+	}
 	s.mu.Unlock()
 	writeJSON(w, http.StatusOK, map[string]int{"port": p})
 }

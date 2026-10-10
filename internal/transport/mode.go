@@ -36,6 +36,14 @@ type Caps struct {
 	// what the budget arithmetic multiplies, and it is why "I added ports and
 	// it got banned faster" has an answer.
 	Addresses int
+	// Exits is how many distinct exits one fetch may walk past when the one it
+	// is on cannot carry a request. Not Addresses: in BlankTrail mode that is
+	// the number of ports in use at once — the budget's multiplier — while a
+	// list behind them can hold a hundred exits or fifteen thousand. Walking
+	// was bounded by the port count, so two ports over a hundred residential
+	// sessions gave up after two bad ones (measured 11 October 2026). Zero
+	// means the same as Addresses.
+	Exits int
 }
 
 // AcceptLanguage is ours in both modes. BlankTrail rewrites User-Agent and

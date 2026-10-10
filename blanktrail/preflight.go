@@ -35,6 +35,10 @@ func (s Severity) String() string {
 // Finding is one preflight verdict. Detail explains what is wrong in the user's
 // terms and Action says what to do about it — never leave Action empty on a
 // Warn or Fail, a bare error code is not an answer.
+//
+// ID is stable and names one situation, never two: a program that shows these
+// in its own language keys its wording on it, and two situations sharing an
+// ID would share one wording and one remedy.
 type Finding struct {
 	ID       string
 	Severity Severity
@@ -116,9 +120,27 @@ func Preflight(ctx context.Context, c *Client, in PreflightInput) Report {
 	}
 
 	lic, err := c.LicenseStatus(ctx)
-	if err != nil {
+	if err != nil && IsUnauthorized(err) {
+		// The health endpoint answers without a key — measured against a live
+		// instance — so a wrong key is first refused here, by the first call
+		// that needs one. Said as the key, not as an unreadable licence: the
+		// remedy for that one sends somebody to check an activation that is
+		// fine.
 		rep.Findings = append(rep.Findings, Finding{
-			ID:       "license_inactive",
+			ID:       "unauthorized",
+			Severity: SeverityFail,
+			Title:    "BlankTrail rejected the API key",
+			Detail:   err.Error(),
+			Action:   "Copy the current key from BlankTrail → Settings → API key and paste it into the connection settings.",
+		})
+		return rep
+	}
+	if err != nil {
+		// Its own ID, not license_inactive: «could not read» and «read, and
+		// inactive» have different remedies, and a caller that says them in
+		// its own words keys the words on this.
+		rep.Findings = append(rep.Findings, Finding{
+			ID:       "license_unreadable",
 			Severity: SeverityFail,
 			Title:    "Could not read the licence status",
 			Detail:   err.Error(),
@@ -145,7 +167,7 @@ func Preflight(ctx context.Context, c *Client, in PreflightInput) Report {
 	gws, err := c.Gateways(ctx)
 	if err != nil {
 		rep.Findings = append(rep.Findings, Finding{
-			ID:       "gateways",
+			ID:       "gateways_unlisted",
 			Severity: SeverityWarn,
 			Title:    "Could not list VPN gateways",
 			Detail:   err.Error(),
@@ -186,20 +208,19 @@ func Preflight(ctx context.Context, c *Client, in PreflightInput) Report {
 // data, whichever of the two caused it.
 //
 // It deliberately does not compare the port count against the process count. It
-// used to, and warned when ports exceeded processes; that warning rested on a
-// model of one solve per process which is not how the solver works. A process
-// carries several context windows and solves in several of them at once, and
-// requests that arrive beyond that capacity queue rather than fail, so ports may
-// legitimately outnumber processes by a wide margin. The warning fired on runs
-// that were fine, which is worse than no warning at all: it teaches whoever sees
-// it that findings from this report can be ignored.
+// used to, and warned when ports exceeded processes; that warning rested on the
+// two numbers being one to one, and they are not. Ports may legitimately
+// outnumber processes by a wide margin, so the warning fired on runs that were
+// fine — which is worse than no warning at all: it teaches whoever sees it that
+// findings from this report can be ignored.
 //
-// Nothing honest replaces it. A real threshold would need the number of
-// concurrent solves a process can carry, and the control API reports no such
-// figure — LicenseStatus carries the licensed process ceiling, the configured
-// process count and a live-process gauge, and no count of context windows or
-// queue depth anywhere. Picking a multiplier here would state as fact a number
-// this package has no way to know.
+// Nothing honest replaces it. A real threshold would need the ratio between the
+// two, and the control API reports nothing to compute one from: LicenseStatus
+// carries the licensed process ceiling, the configured process count and a
+// live-process gauge, and no fourth number. What a process does with the ports
+// pointed at it is BlankTrail's business, not this client's — see
+// LicenseStatus.JsSolverMaxProcs. Picking a multiplier here would state as fact
+// a number this package has no way to know.
 func challengeBreakerFinding(lic LicenseStatus) []Finding {
 	if !lic.ChallengeBreakerEntitled() {
 		return []Finding{{

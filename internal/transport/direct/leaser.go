@@ -105,6 +105,7 @@ func Open(cfg Config) (*Leaser, error) {
 		SolvesChallenges: false,
 		RotatesEgress:    len(cfg.Upstreams) > 1,
 		Addresses:        addressCount(cfg.Upstreams),
+		Exits:            len(cfg.Upstreams),
 	}
 	return l, nil
 }

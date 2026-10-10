@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -175,11 +176,21 @@ type poolPort struct {
 	quarantined bool
 	gone        bool // the proxy no longer lists this port; it cannot come back
 	broken      bool // renewal closed it but could not reopen it
-	failures    int  // consecutive failed attempts; any success clears it
-	requests    int
-	strikes     int
-	renewedAt   time.Time
-	session     uint64 // bumped whenever the port's identity changes
+	// renewDue is set when this port's exit has failed and cannot be replaced
+	// where it stands — a gateway, which the control API will not move on an
+	// open port. Reopening is the only way off it, so the next handout does
+	// that instead of waiting for the proactive schedule to come round.
+	renewDue bool
+	failures int // consecutive failed attempts; any success clears it
+	// requests is the trigger for RenewAfterRequests and is reset by every
+	// renewal; served is the port's whole life and is never reset. One field
+	// did both jobs, so the number on the ports table could never exceed the
+	// renewal trigger and went back to nought every time it fired.
+	requests  int
+	served    int
+	strikes   int
+	renewedAt time.Time
+	session   uint64 // bumped whenever the port's identity changes
 }
 
 func (pt *poolPort) egress() Egress {
@@ -220,6 +231,16 @@ type Pool struct {
 	liveMu   sync.Mutex
 	listed   map[int]bool
 	listedAt time.Time
+
+	// refused is one line per slot that never opened, written once at
+	// construction and read-only afterwards. See Shortfall.
+	refused []string
+
+	// exitFails is each channel's run of exits that would not carry a
+	// request, with no answer from any of its exits in between; down is the
+	// channels that run condemned. Both under mu. See exitFailed.
+	exitFails map[string]int
+	down      []string
 }
 
 // Stats is a snapshot of pool activity, for the progress screen and the logs.
@@ -270,10 +291,22 @@ func (p *Pool) Stats() Stats {
 type PortReport struct {
 	Num int
 	// Channel is the name of the channel this port exits through, as the mix
-	// was configured. Empty for a pool with no channels at all, which is the
-	// host's own address.
+	// was configured. Never empty: a pool given no channels makes itself one,
+	// and it has a name — see DirectChannelName. A consumer that wants to say
+	// «прямое соединение» in its own words compares against that constant
+	// rather than against an empty string that never arrives.
 	Channel string
-	// Requests is how many requests this port has served.
+	// Requests is how many requests this port has served, over the port's whole
+	// life.
+	//
+	// Its own counter, and not the one the renewal trigger reads. They were the
+	// same field, and RenewAfterRequests resets that field every time it fires:
+	// with a trigger of forty, this column could not show a number above
+	// thirty-nine and went back to nought on every port every forty requests.
+	// The one question the table exists to answer — did the load spread across
+	// eight ports or go out through one of them — became unanswerable after the
+	// first cycle, and the total printed above it disagreed with the column by
+	// an order of magnitude.
 	Requests int
 	// Quarantined is set while the pool is not handing this port out.
 	Quarantined bool
@@ -290,17 +323,14 @@ type PortReport struct {
 // address would be one screenshot away from publishing a proxy list.
 func (p *Pool) PortReports() []PortReport {
 	p.mu.Lock()
-	ports := make([]*poolPort, 0, len(p.ports))
-	for _, pt := range p.ports {
-		ports = append(ports, pt)
-	}
+	ports := append(make([]*poolPort, 0, len(p.ports)), p.ports...)
 	p.mu.Unlock()
 
 	out := make([]PortReport, 0, len(ports))
 	for _, pt := range ports {
 		pt.mu.Lock()
 		rep := PortReport{
-			Num: pt.num, Requests: pt.requests,
+			Num: pt.num, Requests: pt.served,
 			Quarantined: pt.quarantined, Gone: pt.gone,
 		}
 		pt.mu.Unlock()
@@ -357,7 +387,7 @@ func NewPool(ctx context.Context, cfg PoolConfig) (*Pool, error) {
 
 	channels := cfg.Channels
 	if len(channels) == 0 {
-		channels = []Channel{NewDirectChannel("direct")}
+		channels = []Channel{NewDirectChannel(DirectChannelName)}
 	}
 
 	host := cfg.ProxyHost
@@ -381,96 +411,275 @@ func NewPool(ctx context.Context, cfg PoolConfig) (*Pool, error) {
 	}
 
 	used := map[int]bool{}
-	for i := 0; i < size; i++ {
+	var refused []string
+	var noNumbers error
+	for i := 0; i < size && noNumbers == nil; i++ {
 		ch := assigned[i]
-		eg, ok := ch.Next()
-		if !ok {
-			_ = p.Close()
-			return nil, fmt.Errorf("blanktrail: channel %q has no egress to hand out", ch.Name())
-		}
-		num, err := p.pickPort(ctx, used)
-		if err != nil {
-			_ = p.Close()
-			return nil, err
-		}
-		used[num] = true
-
-		if _, err := p.cl.OpenPort(ctx, num, cfg.Spec, eg); err != nil {
-			// An error here does not always mean the port stayed shut. The proxy
-			// may have acted on the open and lost the answer on the way back — a
-			// timeout, a dropped connection, a cancelled ctx — leaving the port
-			// open while this call reports failure. It is not in p.ports yet, so
-			// the rollback below cannot see it, and no later run may reclaim it:
-			// taking over a port this program did not open is exactly what the
-			// pool refuses to do.
-			//
-			// Only when the proxy never answered, though. An *APIError means it
-			// did answer and told us the outcome, so there is nothing to resolve —
-			// and one of those answers is 409 "port already open", which is
-			// precisely the case where the port belongs to somebody else: another
-			// pool sharing this PortRange, or a live port from another process.
-			// Closing on that would reach into a running process and take its port
-			// away, which is far worse than the startup leak this exists to
-			// prevent. doJSON returns *APIError only for a status it actually
-			// received; a lost response or a truncated body come back as plain
-			// wrapped errors, which is the ambiguous case and the only one worth
-			// acting on.
-			//
-			// Best effort, on a context of its own because ctx may be the very
-			// thing that just expired. A close for a port that was never opened is
-			// a harmless no-op.
-			var apiErr *APIError
-			if !errors.As(err, &apiErr) {
-				closeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-				_ = p.cl.ClosePort(closeCtx, num)
-				cancel()
+		// One slot, up to portOpenTries goes at filling it, and each go asks the
+		// channel for the next egress it has.
+		//
+		// A slot that would not open used to end the run. That is right for a
+		// channel with one exit and wrong for the shape people actually
+		// configure: a gateway channel names eleven VPN configurations, the
+		// pool takes them in turn, and one of them failing to start — a config
+		// the provider retired, a tunnel that dies on launch — killed a
+		// fifty-thread collection before its first request. The other ten were
+		// fine and the run never found out.
+		var (
+			last       error
+			eg         Egress
+			conflicts  int
+			sameEgress bool
+		)
+		for try := 0; try < portOpenTries; try++ {
+			if !sameEgress {
+				var ok bool
+				if eg, ok = ch.Next(); !ok {
+					last = fmt.Errorf("blanktrail: channel %q has no egress to hand out", ch.Name())
+					break
+				}
 			}
+			sameEgress = false
+			num, err := p.pickPort(ctx, used)
+			if err != nil {
+				// Not this slot's problem and not fixable by trying again:
+				// there are no numbers left for any slot.
+				//
+				// It does not become this slot's reason either, though. The
+				// slot got here because an egress would not open, and reporting
+				// the number shortage instead buried that: the first line an
+				// operator read blamed the port range for a gateway that had
+				// refused to start.
+				noNumbers = err
+				if last == nil {
+					last = err
+				}
+				break
+			}
+			used[num] = true
 
-			_ = p.Close()
-			return nil, fmt.Errorf("blanktrail: open port %d: %w", num, err)
+			pt, err := p.openOne(ctx, num, ch, eg, host)
+			if err != nil {
+				last = err
+				// A number somebody else took is not this egress's failure:
+				// the same egress goes out again on the next number, and the
+				// try is not spent. Charged as one, three pools starting
+				// together left each other's slots empty — three jobs handed
+				// the same suggestion, and the losers' «already being opened»
+				// struck a gateway that had done nothing. Bounded on its own
+				// count, so a service that answers 409 to everything still
+				// ends the walk.
+				if portTaken(err) && conflicts < portConflictTries {
+					conflicts++
+					sameEgress = true
+					try--
+				}
+				continue
+			}
+			last = nil
+			p.mu.Lock()
+			p.ports = append(p.ports, pt)
+			p.byNum[num] = pt
+			p.mu.Unlock()
+			break
 		}
-
-		pt := &poolPort{
-			num:       num,
-			ch:        ch,
-			eg:        eg,
-			base:      newBaseTransport(cfg.Spec.Protocol, host, num, cfg.CA, cfg.Insecure),
-			renewedAt: cfg.Now(),
+		if last != nil {
+			refused = append(refused, last.Error())
 		}
-		// lastUsed stays zero so a fresh port is immediately available.
-		pt.client = &http.Client{
-			Timeout:   cfg.RequestTimeout,
-			Transport: &ladder{rt: pt.base, port: num, rem: p},
-		}
-		p.mu.Lock()
-		p.ports = append(p.ports, pt)
-		p.byNum[num] = pt
-		p.mu.Unlock()
 	}
+
+	if len(p.ports) == 0 {
+		_ = p.Close()
+		if len(refused) == 0 {
+			return nil, errors.New("blanktrail: no port could be opened")
+		}
+		// The first reason, not all of them: fifty slots failing for one bad
+		// gateway produce fifty copies of one sentence.
+		return nil, fmt.Errorf("blanktrail: no port could be opened, %d attempt(s) refused: %s",
+			len(refused), refused[0])
+	}
+	p.refused = refused
 	return p, nil
+}
+
+// portOpenTries is how many egresses one slot is offered before it is left
+// empty.
+//
+// Three, for the same reason a challenged request gets three attempts on one
+// address: enough to walk past a bad exit in a set, few enough that a channel
+// which is wholly broken does not spend the whole start-up budget proving it.
+const portOpenTries = 3
+
+// portConflictTries is how many taken numbers one slot walks past before the
+// collisions start costing it tries. Enough for a dozen pools starting at
+// once, few enough that a service refusing every number is found out quickly.
+const portConflictTries = 16
+
+// portTaken reports whether an open failed only because the number belongs to
+// somebody else.
+func portTaken(err error) bool {
+	var apiErr *APIError
+	return errors.As(err, &apiErr) && apiErr.Status == http.StatusConflict
+}
+
+// Shortfall reports how many of the ports asked for never opened, out of how
+// many were asked for, and why.
+//
+// A pool smaller than it was asked for still works — it is a slower run, not a
+// wrong one — but nothing may find that out by accident. The count is what the
+// caller logs; the reasons are what somebody reads to fix the cause.
+//
+// The second number is the size that was asked for and not the refusals plus
+// what opened, because the two part company exactly when it matters most: a
+// slot that runs out of port numbers ends the whole loop, so every slot after
+// it is never attempted and never refused. Fifty ports asked for, two open and
+// a third that found no number used to read as «не открылось 1 из 3» while
+// forty-eight had been skipped in silence.
+func (p *Pool) Shortfall() (missing, want int, why []string) {
+	p.mu.Lock()
+	open := len(p.ports)
+	p.mu.Unlock()
+	want = p.cfg.Size()
+	if want < open+len(p.refused) {
+		want = open + len(p.refused)
+	}
+	return want - open, want, p.refused
+}
+
+// openOne opens one port and wraps it as a pool port.
+func (p *Pool) openOne(ctx context.Context, num int, ch Channel, eg Egress, host string) (*poolPort, error) {
+	cfg := p.cfg
+	if _, err := p.cl.OpenPort(ctx, num, cfg.Spec, eg); err != nil {
+		// An error here does not always mean the port stayed shut. The proxy
+		// may have acted on the open and lost the answer on the way back — a
+		// timeout, a dropped connection, a cancelled ctx — leaving the port
+		// open while this call reports failure. It is not in p.ports yet, so
+		// the rollback below cannot see it, and no later run may reclaim it:
+		// taking over a port this program did not open is exactly what the
+		// pool refuses to do.
+		//
+		// Only when the proxy never answered, though. An *APIError means it
+		// did answer and told us the outcome, so there is nothing to resolve —
+		// and one of those answers is 409 "port already open", which is
+		// precisely the case where the port belongs to somebody else: another
+		// pool sharing this PortRange, or a live port from another process.
+		// Closing on that would reach into a running process and take its port
+		// away, which is far worse than the startup leak this exists to
+		// prevent. doJSON returns *APIError only for a status it actually
+		// received; a lost response or a truncated body come back as plain
+		// wrapped errors, which is the ambiguous case and the only one worth
+		// acting on.
+		//
+		// Best effort, on a context of its own because ctx may be the very
+		// thing that just expired. A close for a port that was never opened is
+		// a harmless no-op.
+		var apiErr *APIError
+		if !errors.As(err, &apiErr) {
+			closeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			_ = p.cl.ClosePort(closeCtx, num)
+			cancel()
+		}
+		return nil, fmt.Errorf("blanktrail: open port %d: %w", num, err)
+	}
+
+	pt := &poolPort{
+		num:       num,
+		ch:        ch,
+		eg:        eg,
+		base:      newBaseTransport(cfg.Spec.Protocol, host, num, cfg.CA, cfg.Insecure),
+		renewedAt: cfg.Now(),
+	}
+	// lastUsed stays zero so a fresh port is immediately available.
+	pt.client = &http.Client{
+		Timeout:   cfg.RequestTimeout,
+		Transport: &ladder{rt: pt.base, port: num, rem: p},
+	}
+	return pt, nil
 }
 
 func (p *Pool) pickPort(ctx context.Context, used map[int]bool) (int, error) {
 	if p.cfg.PortRange[1] > 0 {
+		// What the service already holds counts as taken, the same as what this
+		// pool has taken itself.
+		//
+		// A range is walked from its first number, so a previous run that ended
+		// without closing — killed, crashed, or a machine restarted under it —
+		// leaves this one asking for numbers somebody still owns. The service
+		// answers 409, which is the one status the open path deliberately does
+		// not act on: a port that belongs to a live process must not be closed
+		// out from under it. So the collision has to be avoided rather than
+		// resolved, and the service will say which numbers to avoid.
+		//
+		// Best effort. If the listing cannot be had, the walk proceeds without
+		// it and a collision is reported the way it was before — an unanswered
+		// question is not grounds for refusing to start.
+		taken, _ := p.cl.ListPorts(ctx)
+		busy := make(map[int]bool, len(taken))
+		for _, n := range taken {
+			busy[n] = true
+		}
 		for n := p.cfg.PortRange[0]; n <= p.cfg.PortRange[1]; n++ {
-			if !used[n] {
+			if !used[n] && !busy[n] {
 				return n, nil
 			}
+		}
+		// Nothing free once the service's own ports are excluded. Said as its
+		// own sentence, because «диапазон исчерпан» with twenty of its numbers
+		// held by a process nobody remembers starting sends somebody looking
+		// for a bug in the range instead of at the leftovers.
+		if len(busy) > 0 {
+			return 0, fmt.Errorf("blanktrail: port range %d-%d exhausted (need %d ports; "+
+				"%d of its numbers are already open on the proxy, likely left by an earlier run)",
+				p.cfg.PortRange[0], p.cfg.PortRange[1], p.cfg.Size(), len(busy))
 		}
 		return 0, fmt.Errorf("blanktrail: port range %d-%d exhausted (need %d ports)",
 			p.cfg.PortRange[0], p.cfg.PortRange[1], p.cfg.Size())
 	}
-	for i := 0; i < 3*p.cfg.Size()+12; i++ {
-		n, err := p.cl.SuggestPort(ctx)
-		if err != nil {
-			return 0, err
+	// The service suggests the lowest number it does not itself hold, and it
+	// suggests the same one every time until somebody actually opens it.
+	//
+	// That makes the suggestion a starting point rather than an answer. A slot
+	// whose open failed leaves its number claimed here and free there, so the
+	// next ask returns it again; the loop that only re-asked was handed one
+	// number for its whole budget and then reported «could not find enough free
+	// ports to open» with nine hundred and ninety-nine of them free. The real
+	// reason the slot died — a gateway that would not start — was overwritten
+	// by that message, so the sentence on the screen sent whoever read it
+	// looking at the port range instead of at the exit.
+	n, err := p.cl.SuggestPort(ctx)
+	if err != nil {
+		return 0, err
+	}
+	if !used[n] {
+		return n, nil
+	}
+
+	// Past it, then. What the service holds is asked for once and walked past
+	// the same way the range branch walks past it; a number neither side claims
+	// is the next candidate. Best effort on the listing, for the same reason as
+	// there: an unanswered question is not grounds for refusing to start, and a
+	// number that turns out to belong to somebody else comes back as a 409 the
+	// slot's next try walks past.
+	taken, _ := p.cl.ListPorts(ctx)
+	busy := make(map[int]bool, len(taken))
+	for _, num := range taken {
+		busy[num] = true
+	}
+	for step := 0; step < 3*p.cfg.Size()+64; step++ {
+		n++
+		if n > maxPort {
+			break
 		}
-		if !used[n] {
+		if !used[n] && !busy[n] {
 			return n, nil
 		}
 	}
-	return 0, errors.New("blanktrail: could not find enough free ports to open")
+	return 0, fmt.Errorf("blanktrail: no free port found walking up from %d "+
+		"(%d held by this pool, %d open on the proxy)", n, len(used), len(busy))
 }
+
+// maxPort is the last number a TCP port can have.
+const maxPort = 65535
 
 // Size reports how many ports the pool holds.
 func (p *Pool) Size() int {
@@ -598,6 +807,11 @@ func (p *Pool) exhaustedLocked() error {
 		}
 		pt.mu.Unlock()
 	}
+	if len(p.down) > 0 && lost == 0 {
+		return fmt.Errorf("%w: channel(s) %s: %d exits in a row would not carry a request and none answered — "+
+			"the provider is refusing the login, is out of traffic, or is down", ErrPoolExhausted,
+			strings.Join(p.down, ", "), channelDownAfter)
+	}
 	switch lost {
 	case 0:
 		return ErrPoolExhausted
@@ -724,6 +938,20 @@ func (l *Lease) RotateEgress(ctx context.Context) error {
 	return nil
 }
 
+// RejectEgress is RotateEgress for an address the site itself turned away —
+// a 403 or a 429 answered to a request other exits carry. The address is
+// marked bad on its way out, so three such answers rest it like a dead one
+// instead of handing it to the next thread: on a cheap list of server proxies
+// a quarter of the addresses were blocked by the site, and a page lost three
+// of them in a row eighty times in five thousand (09.10.2026).
+func (l *Lease) RejectEgress(ctx context.Context) error {
+	if l.released {
+		return errors.New("blanktrail: RejectEgress on a released lease")
+	}
+	l.pool.markBadEgress(l.pt.num)
+	return l.RotateEgress(ctx)
+}
+
 // RenewIdentity gives this port a new fingerprint and a new visit identity,
 // keeping its address.
 //
@@ -836,6 +1064,7 @@ func (l *Lease) Release() {
 
 	l.pt.mu.Lock()
 	l.pt.requests++
+	l.pt.served++
 	l.pt.mu.Unlock()
 
 	l.pool.mu.Lock()
@@ -867,6 +1096,40 @@ func (p *Pool) rotateEgress(ctx context.Context, num int) error {
 		return fmt.Errorf("blanktrail: port %d is not in the pool", num)
 	}
 	cur := pt.egress()
+
+	// A gateway is chosen when the port is opened and the control API has no
+	// way to change it afterwards: its upstream endpoint takes a proxy address
+	// and nothing else, and a request naming a gateway there is accepted and
+	// ignored. So this port's exit cannot move, and saying otherwise did real
+	// damage twice over.
+	//
+	// It used to ask the channel for the next gateway, write that into the
+	// port and return success without a single call to the service. The port
+	// went on leaving through the old gateway while the caller counted a
+	// rotation — a failure message then read «смен выхода: 4» over an address
+	// that had never changed — and markBadEgress, which blames whatever the
+	// port currently holds, struck the new gateway for the old one's failures.
+	// A set of healthy gateways burned itself down that way, one strike at a
+	// time, for faults none of them had committed.
+	//
+	// A set still spreads across a pool: Channel.Next hands the gateways out in
+	// turn as ports are opened, so eleven configurations do serve fifty ports.
+	// What one port cannot do is move between them, and that is what this
+	// reports — the same answer a channel with one fixed address gives, and the
+	// caller already knows the remedy for it: everything else the target sees
+	// can still be replaced, which is Lease.RenewIdentity.
+	if cur.Gateway != "" {
+		// The exit cannot move, but the port can be rebuilt on another one.
+		// Asked to rotate is the pool being told this exit has failed, so the
+		// next handout reopens rather than serving through it again — see
+		// renewIfDue, which does nothing here if the channel has no second
+		// gateway to offer.
+		pt.mu.Lock()
+		pt.renewDue = true
+		pt.mu.Unlock()
+		return ErrRenewUnsupported
+	}
+
 	next, err := pt.ch.Renew(ctx, cur)
 	if errors.Is(err, ErrRenewUnsupported) {
 		// This channel has one fixed IP; there is nothing to rotate to. Say so
@@ -877,10 +1140,6 @@ func (p *Pool) rotateEgress(ctx context.Context, num int) error {
 		return err
 	}
 	pt.setEgress(next)
-	if next.Gateway != "" {
-		// A gateway hop is chosen at open time and cannot be swapped live.
-		return nil
-	}
 	if err := p.cl.SetUpstream(ctx, num, next.Upstream); err != nil {
 		return err
 	}
@@ -906,6 +1165,23 @@ func (p *Pool) markBadEgress(num int) {
 		return
 	}
 	pt.ch.MarkBad(pt.egress())
+}
+
+// refreshTLS puts the port on the exit it already stands on, which is how the
+// service is told to drop what it holds for the port: its pooled connections
+// and its TLS tickets. It is the remedy for a refusal that is the port's TLS
+// rather than its exit. A gateway is not set this way and is left as it is;
+// our own idle connections to the port are dropped either way. Best effort —
+// a failure here leaves the port as it was, which is where it started.
+func (p *Pool) refreshTLS(ctx context.Context, num int) {
+	pt := p.port(num)
+	if pt == nil {
+		return
+	}
+	if up := pt.egress().Upstream; up != "" {
+		_ = p.cl.SetUpstream(ctx, num, up)
+	}
+	pt.base.CloseIdleConnections()
 }
 
 // attemptFailed records a failed attempt on a port and reports whether the
@@ -938,7 +1214,70 @@ func (p *Pool) attemptFailedStatus(num, status int) bool {
 }
 
 // attemptSucceeded clears a port's consecutive-failure count.
-func (p *Pool) attemptSucceeded(num int) { p.resetFailures(num) }
+func (p *Pool) attemptSucceeded(num int) {
+	p.resetFailures(num)
+	if pt := p.port(num); pt != nil {
+		p.mu.Lock()
+		delete(p.exitFails, pt.ch.Name())
+		p.mu.Unlock()
+	}
+}
+
+// channelDownAfter is how many exits of one channel in a row may fail to carry
+// a request, with not one answer between them, before the channel is taken to
+// be down as a whole. On a cheap mixed list seven exits in ten are bad, and
+// fifty bad in a row there is a chance in fifty million; a provider that has
+// stopped taking the login gets there in a minute.
+const channelDownAfter = 50
+
+// exitFailed counts an exit that would not carry a request against its
+// channel, and reports whether that made the channel down.
+//
+// The exit itself is struck and replaced by the caller, and that is right for
+// one bad address. It does nothing for a channel whose every address is bad —
+// a residential login the provider stopped accepting answered «523» on all
+// hundred sessions, the bench let a share of them out again by design, and a
+// run walked its sixteen threads through dead exits at fifteen seconds a try
+// for an hour, with every port on the screen saying «работает» (09.10.2026).
+// Down, the channel's ports are quarantined, so a run with other channels
+// carries on through them and a run with only this one ends, saying why.
+func (p *Pool) exitFailed(num int) bool {
+	pt := p.port(num)
+	if pt == nil {
+		return false
+	}
+	name := pt.ch.Name()
+	p.mu.Lock()
+	if p.exitFails == nil {
+		p.exitFails = map[string]int{}
+	}
+	p.exitFails[name]++
+	if p.exitFails[name] < channelDownAfter || slices.Contains(p.down, name) {
+		down := slices.Contains(p.down, name)
+		p.mu.Unlock()
+		return down
+	}
+	p.down = append(p.down, name)
+	ports := slices.Clone(p.ports)
+	p.mu.Unlock()
+
+	for _, other := range ports {
+		if other.ch.Name() != name {
+			continue
+		}
+		other.mu.Lock()
+		already := other.quarantined
+		other.quarantined = true
+		other.mu.Unlock()
+		if !already {
+			p.mu.Lock()
+			p.stats.Quarantines++
+			p.mu.Unlock()
+		}
+	}
+	p.mixer.Penalise(pt.ch)
+	return true
+}
 
 // resetFailures clears a port's consecutive-failure count. Both things that
 // clear it — a successful attempt and a fresh egress — mean the same to the
@@ -966,20 +1305,36 @@ func (p *Pool) renewIfDue(ctx context.Context, pt *poolPort) error {
 
 	pt.mu.Lock()
 	broken := pt.broken
+	dead := pt.renewDue
 	byCount := p.cfg.RenewAfterRequests > 0 && pt.requests >= p.cfg.RenewAfterRequests
 	byTime := p.cfg.RenewAfterInterval > 0 && now.Sub(pt.renewedAt) >= p.cfg.RenewAfterInterval
 	pt.mu.Unlock()
 
 	// A broken port was closed by an earlier renewal that could not finish. It
 	// has to be repaired before it can serve anything, whatever the triggers say.
-	if !broken && !byCount && !byTime {
+	if !broken && !dead && !byCount && !byTime {
 		return nil
 	}
 
 	eg := pt.egress()
-	if next, err := pt.ch.Renew(ctx, eg); err == nil {
+	next, err := pt.ch.Renew(ctx, eg)
+	switch {
+	case err == nil:
 		eg = next
-	} else if !errors.Is(err, ErrRenewUnsupported) {
+	case errors.Is(err, ErrRenewUnsupported):
+		// Nowhere else to go. When that was the only reason to be here — an
+		// exit reported dead on a channel holding just the one — reopening
+		// would hand back the very exit that failed, at three control-API
+		// calls a time. Drop the flag and leave the port as it is; the
+		// proactive triggers still renew it on their own schedule, and a
+		// caller that keeps losing on it leaves it after its own budget.
+		if !broken && !byCount && !byTime {
+			pt.mu.Lock()
+			pt.renewDue = false
+			pt.mu.Unlock()
+			return nil
+		}
+	default:
 		return p.renewFailed(pt, fmt.Errorf("blanktrail: renew port %d: egress: %w", pt.num, err))
 	}
 
@@ -1015,6 +1370,7 @@ func (p *Pool) renewIfDue(ctx context.Context, pt *poolPort) error {
 	pt.failures = 0
 	pt.strikes = 0
 	pt.broken = false
+	pt.renewDue = false
 	pt.renewedAt = now
 	pt.session++
 	pt.mu.Unlock()

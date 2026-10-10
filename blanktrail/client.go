@@ -126,6 +126,9 @@ type PortSpec struct {
 	SpoofHeaders   bool // spoof request header order
 	SpoofUserAgent bool // let the proxy own a consistent UA and sec-ch-ua
 	JSSolver       bool // Challenge Breaker: solve JS challenges upstream
+	KeepSessions   bool // give the port its own per-domain cookie jar
+	Decompress     bool // hand the client an identity-encoded body
+	EnableHTTP3    bool // re-originate over HTTP/3 where the target offers it
 
 	// CaptchaAction and CaptchaMaxAttempts are the proxy's own policy for a
 	// port that meets an interactive challenge. A live port reports both and
@@ -136,9 +139,6 @@ type PortSpec struct {
 	// care.
 	CaptchaAction      string
 	CaptchaMaxAttempts int
-	KeepSessions       bool // give the port its own per-domain cookie jar
-	Decompress         bool // hand the client an identity-encoded body
-	EnableHTTP3        bool // re-originate over HTTP/3 where the target offers it
 
 	// TimeoutSeconds is how long the port itself waits for one request before
 	// giving up. Zero leaves the port's own default in place.
@@ -148,6 +148,13 @@ type PortSpec struct {
 	// challenge short — it only bounds an ordinary request that is going nowhere,
 	// which is what a dead upstream looks like.
 	TimeoutSeconds int
+
+	// ConnectTimeoutSeconds bounds reaching the upstream address alone. A dead
+	// proxy is a connection that never opens, and recognising it in seconds is
+	// what lets a thread on a cheap list move to the next address instead of
+	// waiting out the service's default on each dead one. Zero leaves it to
+	// the service.
+	ConnectTimeoutSeconds int
 
 	MaxConcurrent int    // in-flight requests allowed on the port
 	RetryDelayMs  int    // proxy-side retry delay
@@ -182,6 +189,11 @@ func DefaultPortSpec() PortSpec {
 		// raises this itself while it clears a challenge, so bounding it here costs
 		// a slow challenge nothing and costs a bad proxy the whole wait.
 		TimeoutSeconds: 30,
+		// And the connection to the upstream itself in five, as Google Parser
+		// asks: half the addresses of a cheap list never answer, and 500
+		// threads spent on waiting for them made three pages a second
+		// (09.10.2026).
+		ConnectTimeoutSeconds: 5,
 
 		LeakGuard: "warn",
 
@@ -221,27 +233,34 @@ type PortInfo struct {
 // Note: auto_rotate is deliberately absent. It was removed from the control API
 // — a profile is applied on open by itself.
 type openPortRequest struct {
-	Port               int     `json:"port"`
-	Protocol           string  `json:"protocol"`
-	Mode               string  `json:"mode,omitempty"`
-	Browser            string  `json:"browser,omitempty"`
-	OS                 string  `json:"os,omitempty"`
-	Upstream           *string `json:"upstream,omitempty"`
-	UpstreamGateway    string  `json:"upstream_gateway,omitempty"`
-	H2Spoofing         *bool   `json:"h2_spoofing,omitempty"`
-	SpoofHeaders       *bool   `json:"spoof_headers,omitempty"`
-	SpoofUserAgent     *bool   `json:"spoof_user_agent,omitempty"`
-	JSSolver           *bool   `json:"js_solver,omitempty"`
-	CaptchaAction      string  `json:"captcha_action,omitempty"`
-	CaptchaMaxAttempts int     `json:"captcha_max_attempts,omitempty"`
-	KeepSessions       *bool   `json:"keep_sessions,omitempty"`
-	Decompress         *bool   `json:"decompress,omitempty"`
-	EnableHTTP3        *bool   `json:"enable_http3,omitempty"`
-	MaxConcurrent      *int    `json:"max_concurrent,omitempty"`
-	RetryDelayMs       *int    `json:"retry_delay_ms,omitempty"`
-	IdleSeconds        *int    `json:"idle_seconds,omitempty"`
-	TimeoutSeconds     *int    `json:"timeout_seconds,omitempty"`
-	LeakGuard          string  `json:"leak_guard,omitempty"`
+	Port            int     `json:"port"`
+	Protocol        string  `json:"protocol"`
+	Mode            string  `json:"mode,omitempty"`
+	Browser         string  `json:"browser,omitempty"`
+	OS              string  `json:"os,omitempty"`
+	Upstream        *string `json:"upstream,omitempty"`
+	UpstreamGateway string  `json:"upstream_gateway,omitempty"`
+	H2Spoofing      *bool   `json:"h2_spoofing,omitempty"`
+	SpoofHeaders    *bool   `json:"spoof_headers,omitempty"`
+	SpoofUserAgent  *bool   `json:"spoof_user_agent,omitempty"`
+	JSSolver        *bool   `json:"js_solver,omitempty"`
+	KeepSessions    *bool   `json:"keep_sessions,omitempty"`
+	Decompress      *bool   `json:"decompress,omitempty"`
+	EnableHTTP3     *bool   `json:"enable_http3,omitempty"`
+	MaxConcurrent   *int    `json:"max_concurrent,omitempty"`
+	RetryDelayMs    *int    `json:"retry_delay_ms,omitempty"`
+	IdleSeconds     *int    `json:"idle_seconds,omitempty"`
+	TimeoutSeconds  *int    `json:"timeout_seconds,omitempty"`
+	ConnectTimeout  *int    `json:"connect_timeout_seconds,omitempty"`
+	LeakGuard       string  `json:"leak_guard,omitempty"`
+	// AllowMITMUpstream is sent, and always false. An exit that opens TLS
+	// itself replaces the browser's fingerprint with its own, and the port
+	// is told outright to refuse one rather than left to the service's
+	// default — a default that changed would have broken every request's
+	// fingerprint without a word (10.10.2026).
+	AllowMITMUpstream  *bool  `json:"allow_mitm_upstream"`
+	CaptchaAction      string `json:"captcha_action,omitempty"`
+	CaptchaMaxAttempts int    `json:"captcha_max_attempts,omitempty"`
 }
 
 // protocolOr defaults an unset protocol to the HTTP CONNECT forward proxy, which
@@ -257,21 +276,24 @@ func (s PortSpec) request(port int, eg Egress) openPortRequest {
 	h2, hdr, ua := s.H2Spoofing, s.SpoofHeaders, s.SpoofUserAgent
 	js, jar, dec, h3 := s.JSSolver, s.KeepSessions, s.Decompress, s.EnableHTTP3
 	req := openPortRequest{
-		Port:               port,
-		Protocol:           protocolOr(s.Protocol),
-		Mode:               s.Mode,
-		Browser:            s.Browser,
-		OS:                 s.OS,
-		H2Spoofing:         &h2,
-		SpoofHeaders:       &hdr,
-		SpoofUserAgent:     &ua,
-		JSSolver:           &js,
+		Port:           port,
+		Protocol:       protocolOr(s.Protocol),
+		Mode:           s.Mode,
+		Browser:        s.Browser,
+		OS:             s.OS,
+		H2Spoofing:     &h2,
+		SpoofHeaders:   &hdr,
+		SpoofUserAgent: &ua,
+		JSSolver:       &js,
+		KeepSessions:   &jar,
+		Decompress:     &dec,
+		EnableHTTP3:    &h3,
+		LeakGuard:      s.LeakGuard,
+
+		AllowMITMUpstream: new(bool),
+
 		CaptchaAction:      s.CaptchaAction,
 		CaptchaMaxAttempts: s.CaptchaMaxAttempts,
-		KeepSessions:       &jar,
-		Decompress:         &dec,
-		EnableHTTP3:        &h3,
-		LeakGuard:          s.LeakGuard,
 	}
 	if s.MaxConcurrent > 0 {
 		n := s.MaxConcurrent
@@ -288,6 +310,10 @@ func (s PortSpec) request(port int, eg Egress) openPortRequest {
 	if s.TimeoutSeconds > 0 {
 		n := s.TimeoutSeconds
 		req.TimeoutSeconds = &n
+	}
+	if s.ConnectTimeoutSeconds > 0 {
+		n := s.ConnectTimeoutSeconds
+		req.ConnectTimeout = &n
 	}
 	switch {
 	case eg.Gateway != "":
