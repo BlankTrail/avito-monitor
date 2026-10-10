@@ -158,21 +158,11 @@ func buildPanel(s *store.Store) *web.Server {
 		return c.Gateways(ctx)
 	}
 
-	// The list is read and counted, and nothing is dialled. Dialling every
-	// address of a thousand-line list from a settings screen is a thousand
-	// connections a person did not ask for; the pool finds out which ones work
-	// by using them, and Mixer demotes the ones that do not.
+	// A real check: a sample of a list's exits opening TLS to the site, every
+	// gateway of a set through BlankTrail. See probe.go for why counting the
+	// lines was not one.
 	srv.CheckChannel = func(ctx context.Context, id int64) (string, error) {
-		ps, err := s.Proxies(ctx, id)
-		if err != nil {
-			return "", err
-		}
-		if len(ps) == 0 {
-			return "", errors.New("в этом выходе нет ни одного адреса")
-		}
-		// The first address by host and port, and never its credential.
-		return fmt.Sprintf("%d в списке, первый %s:%d",
-			len(ps), ps[0].Host, ps[0].Port), nil
+		return checkChannel(ctx, s, id)
 	}
 
 	srv.Autostart = osAutostart{}

@@ -50,10 +50,32 @@
   }
 
   document.addEventListener("click", function (ev) {
-    var el = ev.target.closest("[data-load]");
+    var el = ev.target.closest("button[data-load], a[data-load]");
     if (!el) return;
     ev.preventDefault();
     load(el);
+  });
+
+  // data-switch on a select shows, inside the same form, only the blocks whose
+  // data-when names the chosen value. A block with data-auto inside a shown
+  // block loads itself the first time it appears.
+  function switchForm(sel) {
+    var form = sel.form;
+    if (!form) return;
+    form.querySelectorAll("[data-when]").forEach(function (box) {
+      var on = box.getAttribute("data-when").split(" ").indexOf(sel.value) >= 0;
+      box.hidden = !on;
+      if (on) {
+        box.querySelectorAll("[data-auto]").forEach(function (el) {
+          el.removeAttribute("data-auto");
+          load(el);
+        });
+      }
+    });
+  }
+  document.querySelectorAll("select[data-switch]").forEach(switchForm);
+  document.addEventListener("change", function (ev) {
+    if (ev.target.matches("select[data-switch]")) switchForm(ev.target);
   });
 
   // A form with data-confirm asks before it posts. Used by the delete buttons,

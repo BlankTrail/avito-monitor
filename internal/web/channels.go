@@ -99,7 +99,9 @@ func (s *Server) channelCard(c store.Channel, addresses int) string {
 	case "rotating":
 		b.WriteString(`<p>Один адрес за раз, меняется по ссылке провайдера.</p>`)
 	case "gateway":
-		fmt.Fprintf(&b, `<p>Шлюз BlankTrail: %s</p>`, esc(c.Source))
+		n := len(splitNames(c.Source))
+		fmt.Fprintf(&b, `<p>%d %s VPN BlankTrail: %s</p>`, n,
+			esc(ru.Plural(n, "шлюз", "шлюза", "шлюзов")), esc(c.Source))
 	case "direct":
 		b.WriteString(`<p>Собственный адрес этой машины.</p>`)
 	}
@@ -145,28 +147,44 @@ func channelForm() string {
 	b.WriteString(`<div class="card"><h2>Добавить выход</h2>`)
 	b.WriteString(`<form method="post" action="/channels">`)
 	b.WriteString(field("Название", "name", "", "text", ""))
+	// The fields follow the kind. All of them on screen at once — a list, a
+	// link, a rotation address, a change link and a gateway name, for a choice
+	// that uses at most two — was a form nobody could read at a glance, and the
+	// first thing anybody filming it would have had to explain away.
 	b.WriteString(`<label class="field"><span class="label">Вид</span>` +
-		`<select name="kind">` +
+		`<select name="kind" data-switch>` +
 		`<option value="proxy-list">Список адресов</option>` +
 		`<option value="rotating">Ротация по ссылке</option>` +
-		`<option value="gateway">Шлюз BlankTrail</option>` +
+		`<option value="gateway">Шлюзы VPN BlankTrail</option>` +
 		`<option value="direct">Собственный адрес этой машины</option>` +
 		`</select></label>`)
+	b.WriteString(`<div data-when="proxy-list">`)
 	b.WriteString(`<label class="field"><span class="label">Список адресов</span>` +
 		`<textarea class="input" name="list" rows="6" ` +
 		`placeholder="socks5://user:pass@10.0.0.1:1080&#10;10.0.0.2:1080"></textarea>` +
-		`<span class="hint">По одному в строке. Схема по умолчанию — socks5.</span></label>`)
+		`<span class="hint">По одному в строке: схема://логин:пароль@адрес:порт, ` +
+		`без схемы — socks5. У резидентских прокси с сессиями каждая строка — ` +
+		`своя сессия, а значит свой адрес выхода.</span></label>`)
 	b.WriteString(field("Или ссылка на список", "source", "", "text",
-		"http(s):// — список будет перечитываться."))
+		"http(s):// или путь к файлу — список перечитывается раз в час."))
+	b.WriteString(`</div>`)
+	b.WriteString(`<div data-when="rotating">`)
 	b.WriteString(field("Адрес для ротации", "upstream", "", "text",
 		"Один адрес, который провайдер меняет по ссылке."))
 	b.WriteString(field("Ссылка смены адреса", "rotate_url", "", "text",
 		"Эта ссылка не дёргается при проверке: провайдеры ограничивают, "+
 			"как часто её можно вызывать."))
-	b.WriteString(`<p><button type="button" data-load="/channels/gateways" ` +
-		`data-into="#gateways">Показать шлюзы BlankTrail</button> ` +
-		`<span id="gateways"></span></p>`)
-	b.WriteString(field("Имя шлюза", "gateway", "", "text", ""))
+	b.WriteString(`</div>`)
+	// The gateways are fetched when the kind is chosen, as ticks: a set of
+	// them is one exit the way a list is one, and the collector hands them out
+	// in turn across its ports. Typing a name from memory was the old way.
+	b.WriteString(`<div data-when="gateway">` +
+		`<p class="hint">Шлюзы VPN настраиваются в самой BlankTrail Proxy ` +
+		`(«Конфигурации VPN»); здесь отмечается, какие из них можно брать. ` +
+		`Работают только при выходе через BlankTrail.</p>` +
+		`<div id="gateways" data-load="/channels/gateways" data-auto></div></div>`)
+	b.WriteString(`<div data-when="direct"><p class="hint">Запросы уходят с адреса ` +
+		`этой машины. Его можно смешать с другими выходами.</p></div>`)
 	b.WriteString(`<button class="primary" type="submit">Добавить</button>`)
 	b.WriteString(`</form></div>`)
 	return b.String()
@@ -211,9 +229,20 @@ func (s *Server) saveChannel(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	case "gateway":
-		c.Source = strings.TrimSpace(r.FormValue("gateway"))
+		// The ticked set, or one name typed by hand for a build that cannot
+		// reach the service to list them.
+		var names []string
+		for _, n := range r.Form["gateways"] {
+			if n = strings.TrimSpace(n); n != "" {
+				names = append(names, n)
+			}
+		}
+		if typed := strings.TrimSpace(r.FormValue("gateway")); typed != "" {
+			names = append(names, typed)
+		}
+		c.Source = strings.Join(names, ", ")
 		if c.Source == "" {
-			s.renderChannels(w, r, "не выбран шлюз")
+			s.renderChannels(w, r, "не отмечено ни одного шлюза")
 			return
 		}
 	case "direct":
@@ -361,9 +390,15 @@ func (s *Server) listGateways(w http.ResponseWriter, r *http.Request) {
 		writeFragment(w, note("warning", "ни одного шлюза не настроено"))
 		return
 	}
-	names := make([]string, 0, len(list.Gateways))
+	// Ticks, all on by default: the common wish is «через мои шлюзы», and
+	// unticking the one that misbehaves is easier than ticking fifteen.
+	var b strings.Builder
+	fmt.Fprintf(&b, `<p class="hint">У BlankTrail %d %s.</p><div class="gw-list">`,
+		len(list.Gateways), esc(ru.Plural(len(list.Gateways), "шлюз", "шлюза", "шлюзов")))
 	for _, g := range list.Gateways {
-		names = append(names, esc(g.Name))
+		fmt.Fprintf(&b, `<label class="check"><input type="checkbox" name="gateways" `+
+			`value="%s" checked><span>%s</span></label>`, attr(g.Name), esc(g.Name))
 	}
-	writeFragment(w, `<span>`+strings.Join(names, ", ")+`</span>`)
+	b.WriteString(`</div>`)
+	writeFragment(w, b.String())
 }

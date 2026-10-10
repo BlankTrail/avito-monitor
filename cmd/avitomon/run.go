@@ -10,7 +10,6 @@ import (
 	"os"
 	"time"
 
-	"github.com/BlankTrail/avito-monitor/blanktrail"
 	"github.com/BlankTrail/avito-monitor/internal/store"
 	"github.com/BlankTrail/avito-monitor/internal/transport"
 	"github.com/BlankTrail/avito-monitor/internal/transport/bt"
@@ -209,14 +208,34 @@ type leaserOpts struct {
 func openLeaser(ctx context.Context, s *store.Store, mode transport.Mode,
 	w store.Watch, o leaserOpts,
 ) (transport.Leaser, error) {
-	var upstreams []blanktrail.Upstream
-	if o.proxyFile != "" {
-		var err error
-		if upstreams, err = readProxies(ctx, o.proxyFile); err != nil {
-			return nil, err
-		}
+	eg, err := egressFor(ctx, s, mode == transport.ModeBlankTrail, o.proxyFile)
+	if err != nil {
+		return nil, err
 	}
+	leaser, err := openLeaserOn(ctx, s, mode, w, o, eg)
+	if err != nil {
+		eg.close()
+		return nil, err
+	}
+	return closing{leaser, eg.close}, nil
+}
 
+// closing is a leaser that also lets go of its egress — a list read from a link
+// keeps a goroutine re-reading it, and one left behind per open is a leak.
+type closing struct {
+	transport.Leaser
+	release func()
+}
+
+func (c closing) Close() error {
+	err := c.Leaser.Close()
+	c.release()
+	return err
+}
+
+func openLeaserOn(ctx context.Context, s *store.Store, mode transport.Mode,
+	w store.Watch, o leaserOpts, eg egress,
+) (transport.Leaser, error) {
 	switch mode {
 	case transport.ModeDirect:
 		// The identity is persisted by default, and that is not a convenience.
@@ -249,7 +268,7 @@ func openLeaser(ctx context.Context, s *store.Store, mode transport.Mode,
 			Surface: w.Surface, Sessions: 1,
 			Root:      originOf(w.URL),
 			StatePath: state,
-			Upstreams: upstreamURLs(upstreams),
+			Upstreams: eg.upstreams,
 		})
 
 	case transport.ModeBlankTrail:
@@ -275,16 +294,10 @@ func openLeaser(ctx context.Context, s *store.Store, mode transport.Mode,
 		if cfg.Ports <= 0 {
 			cfg.Ports = 2
 		}
-		var channels []blanktrail.Channel
-		if len(upstreams) > 0 {
-			channels = []blanktrail.Channel{
-				blanktrail.NewListChannel("pool", blanktrail.NewStaticRotor(upstreams)),
-			}
-		}
 		return bt.Open(ctx, bt.Config{
 			ControlURL: cfg.ControlURL, APIKey: cfg.APIKey,
 			Ports: cfg.Ports, Surface: w.Surface,
-			Channels: channels, Addresses: len(upstreams),
+			Channels: eg.channels, Addresses: eg.exits,
 			Insecure: true,
 		})
 

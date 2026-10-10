@@ -615,6 +615,22 @@ func watchFromForm(r *http.Request) (store.Watch, error) {
 // nothing would refuse every watch on an install that has not configured a
 // proxy — which is most of them.
 func (s *Server) addressCount(ctx context.Context) (int, error) {
+	// What the collector can use AT ONCE, which is what a per-address ceiling
+	// multiplies — and it depends on the transport.
+	//
+	// Direct mode holds one identity on purpose (the result set is a function
+	// of it, see openLeaserOn), so one address is in use at a time and the rest
+	// of a list are spares it walks to when that one fails. Counting them all
+	// promised fifteen thousand times the ceiling to somebody who pasted a
+	// provider's list, against a collector that could never use more than one.
+	//
+	// BlankTrail mode uses one exit per port, so it is the ports, capped by how
+	// many exits exist. A list given as a link has no count until it is read;
+	// it is assumed to cover the ports, which is what a provider's list is for.
+	mode, _ := s.Store.TransportMode(ctx)
+	if mode != transport.ModeBlankTrail {
+		return 1, nil
+	}
 	channels, err := s.Store.Channels(ctx)
 	if err != nil {
 		return 1, err
@@ -623,25 +639,49 @@ func (s *Server) addressCount(ctx context.Context) (int, error) {
 	if err != nil {
 		return 1, err
 	}
-	total := 0
+	cfg, _ := s.Store.BlankTrailConfig(ctx)
+	ports := cfg.Ports
+	if ports <= 0 {
+		ports = 2
+	}
+	exits := 0
 	for _, c := range channels {
 		if !c.Enabled {
 			continue
 		}
 		switch c.Kind {
 		case "proxy-list":
-			total += counts[c.ID]
-		case "rotating", "gateway", "direct":
+			if n := counts[c.ID]; n > 0 {
+				exits += n
+			} else if strings.TrimSpace(c.Source) != "" {
+				exits += ports
+			}
+		case "gateway":
+			exits += max(1, len(splitNames(c.Source)))
+		case "rotating", "direct":
 			// One address each. A rotating channel is one address at a time —
-			// that is what makes it rotating — and a gateway is one exit
-			// however many ports point at it.
-			total++
+			// that is what makes it rotating.
+			exits++
 		}
 	}
-	if total < 1 {
+	if exits < 1 {
 		return 1, nil
 	}
-	return total, nil
+	return min(exits, ports), nil
+}
+
+// splitNames reads a gateway channel's source: names separated by commas or
+// lines. The collector reads it the same way (cmd/avitomon/egress.go).
+func splitNames(source string) []string {
+	var out []string
+	for _, f := range strings.FieldsFunc(source, func(r rune) bool {
+		return r == ',' || r == 10 || r == 13 // a comma, a line feed, a carriage return
+	}) {
+		if f = strings.TrimSpace(f); f != "" {
+			out = append(out, f)
+		}
+	}
+	return out
 }
 
 // resumeWatch clears a halt from the panel.

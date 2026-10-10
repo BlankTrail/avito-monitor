@@ -12,6 +12,8 @@ import (
 	"testing"
 
 	"github.com/BlankTrail/avito-monitor/blanktrail"
+	"github.com/BlankTrail/avito-monitor/internal/store"
+	"github.com/BlankTrail/avito-monitor/internal/transport"
 )
 
 func aProxyList(t *testing.T, s *Server, name, list string) int64 {
@@ -170,10 +172,54 @@ func TestRefreshingAListReplacesItRatherThanAddingToIt(t *testing.T) {
 	}
 }
 
+// blankTrailWithPorts puts the installation in BlankTrail mode with n ports,
+// which is where an address list multiplies the ceiling at all: one port per
+// exit at once. Direct mode holds one identity and so one address in use.
+func blankTrailWithPorts(t *testing.T, s *Server, n int) {
+	t.Helper()
+	ctx := context.Background()
+	if err := s.Store.SetTransportMode(ctx, transport.ModeBlankTrail); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Store.SetBlankTrailConfig(ctx, store.BlankTrailConfig{
+		ControlURL: "http://127.0.0.1:8891", Ports: n,
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestDirectModeUsesOneAddressHoweverLongTheList.
+//
+// Direct mode holds one identity on purpose — the result set is a function of
+// it — so a pasted list of fifteen thousand gives one address in use and the
+// rest as spares. The budget used to multiply by all of them.
+func TestDirectModeUsesOneAddressHoweverLongTheList(t *testing.T) {
+	s := newServer(t)
+	if err := s.Store.SetTransportMode(context.Background(), transport.ModeDirect); err != nil {
+		t.Fatal(err)
+	}
+	aProxyList(t, s, "провайдер", threeProxies)
+	if n, _ := s.addressCount(context.Background()); n != 1 {
+		t.Errorf("addresses = %d in direct mode, want 1", n)
+	}
+}
+
+// TestBlankTrailUsesNoMoreExitsThanPorts. Ten ports over three proxies are
+// three addresses, and three ports over a hundred are three.
+func TestBlankTrailUsesNoMoreExitsThanPorts(t *testing.T) {
+	s := newServer(t)
+	blankTrailWithPorts(t, s, 2)
+	aProxyList(t, s, "провайдер", threeProxies)
+	if n, _ := s.addressCount(context.Background()); n != 2 {
+		t.Errorf("addresses = %d with two ports, want 2", n)
+	}
+}
+
 // TestDeletingAChannelAsksAndThenChangesTheStatedCeiling.
 func TestDeletingAChannelAsksAndThenChangesTheStatedCeiling(t *testing.T) {
 	s := newServer(t)
 	ctx := context.Background()
+	blankTrailWithPorts(t, s, 10)
 	id := aProxyList(t, s, "провайдер", "10.0.0.1:1080\n10.0.0.2:1080\n10.0.0.3:1080\n")
 
 	if !strings.Contains(get(t, s, "/channels").Body.String(), "data-confirm") {
@@ -215,6 +261,7 @@ func TestATestThatFailsSaysWhyWithoutTheCredential(t *testing.T) {
 func TestTheHostsOwnAddressIsAChannelLikeAnyOther(t *testing.T) {
 	s := newServer(t)
 	ctx := context.Background()
+	blankTrailWithPorts(t, s, 10)
 	if rec := post(t, s, "/channels", url.Values{
 		"kind": {"direct"}, "name": {"эта машина"},
 	}); rec.Code != http.StatusSeeOther {
@@ -273,3 +320,6 @@ func TestARotatingChannelNeedsBothItsHalves(t *testing.T) {
 		}
 	}
 }
+
+// threeProxies is a list of three, one per line.
+const threeProxies = "10.0.0.1:1080\n10.0.0.2:1080\n10.0.0.3:1080\n"
