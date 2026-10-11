@@ -4,6 +4,7 @@ package repost
 
 import (
 	"fmt"
+	"github.com/BlankTrail/avito-monitor/internal/ru"
 	"math"
 )
 
@@ -210,10 +211,10 @@ func priceDetail(a, b int64, matched bool) string {
 	case a <= 0 || b <= 0:
 		return "цену прочитать не удалось хотя бы у одного"
 	case matched:
-		return fmt.Sprintf("отличается меньше чем на %.0f%%: %d и %d ₽",
-			priceTolerance*100, b/100, a/100)
+		return fmt.Sprintf("отличается меньше чем на %.0f%%: %s и %s ₽",
+			priceTolerance*100, ru.Thousands(b/100), ru.Thousands(a/100))
 	default:
-		return fmt.Sprintf("отличается сильнее чем на %.0f%%: %d и %d ₽",
-			priceTolerance*100, b/100, a/100)
+		return fmt.Sprintf("отличается сильнее чем на %.0f%%: %s и %s ₽",
+			priceTolerance*100, ru.Thousands(b/100), ru.Thousands(a/100))
 	}
 }

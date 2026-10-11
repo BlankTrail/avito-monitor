@@ -41,3 +41,13 @@ func TestANegativeCountUsesItsMagnitude(t *testing.T) {
 		t.Errorf("Plural(-1) = %q", got)
 	}
 }
+
+func TestThousandsGroupsByThree(t *testing.T) {
+	for in, want := range map[int64]string{
+		0: "0", 999: "999", 1000: "1 000", 15500: "15 500", 1234567: "1 234 567", -2500: "-2 500",
+	} {
+		if got := Thousands(in); got != want {
+			t.Errorf("Thousands(%d) = %q, want %q", in, got, want)
+		}
+	}
+}
