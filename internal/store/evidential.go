@@ -55,6 +55,24 @@ func readPrevPass(ctx context.Context, tx *sql.Tx, watchID int64) (prevPass, err
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return p, fmt.Errorf("store: previous evidential pass: %w", err)
 	}
+	// The gap clock restarts on a clean re-seed too. A re-seed is the first
+	// reading after a gap, and the readings after it are measured from it —
+	// that is what «re-seed» means. Measured from the last EVIDENTIAL pass
+	// only, the clock never restarted: the re-seed is not evidential, so the
+	// next pass was also «over three intervals», and the next, for ever.
+	// Found on 11 October 2026: a watch forty passes deep in re-seeds, three
+	// hours after a run of degraded passes ended.
+	var reseedAt int64
+	err = tx.QueryRowContext(ctx, `
+		SELECT started_at FROM passes
+		WHERE watch_id = ? AND class = 'ok' AND degraded_why LIKE ?
+		ORDER BY id DESC LIMIT 1`, watchID, "%"+lifecycle.ReseedMarker+"%").Scan(&reseedAt)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return p, fmt.Errorf("store: previous re-seed: %w", err)
+	}
+	if reseedAt > p.evidenceAt {
+		p.evidenceAt = reseedAt
+	}
 
 	rows, err := tx.QueryContext(ctx, `
 		SELECT item_id FROM pass_items

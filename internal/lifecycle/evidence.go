@@ -12,6 +12,10 @@ package lifecycle
 
 import "fmt"
 
+// ReseedMarker ends the reason a re-seed gives. The store finds re-seeds by
+// it, to restart the gap clock from them.
+const ReseedMarker = "this is a re-seed rather than a reading"
+
 // reseedAfterIntervals is how stale the last evidential pass may be before the
 // next one is a re-seed rather than a reading.
 //
@@ -108,7 +112,7 @@ func Admissible(p PassFacts) Verdict {
 		if gap := p.StartedAt - p.PrevEvidenceAt; gap > int64(reseedAfterIntervals*p.IntervalSec) {
 			return Verdict{false, fmt.Sprintf(
 				"%d seconds since the last admissible pass, over %d intervals: "+
-					"this is a re-seed rather than a reading",
+					ReseedMarker,
 				gap, reseedAfterIntervals)}
 		}
 	}

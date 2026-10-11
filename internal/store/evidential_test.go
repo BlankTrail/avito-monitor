@@ -279,3 +279,38 @@ func TestANarrowWatchStaysUnflagged(t *testing.T) {
 		t.Error("a narrow watch was flagged")
 	}
 }
+
+// TestAWatchComesBackFromAReseed.
+//
+// After a gap the first pass is a re-seed, and the one after it is a reading
+// again. The clock measured from the last evidential pass only, so the
+// re-seed never restarted it: on 11 October 2026 a real watch was forty passes
+// deep in re-seeds, three hours after the cause had gone.
+func TestAWatchComesBackFromAReseed(t *testing.T) {
+	s := openTemp(t)
+	ctx := context.Background()
+	w := aWatch()
+	w.IntervalSec = 180
+	wid, err := s.AddWatch(ctx, w)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids := []int64{1, 2, 3}
+	save := func(at int64) SaveResult {
+		res, err := s.SavePass(ctx, aPass(wid, at), listingsFor(ids...))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return res
+	}
+	save(1000)                       // seed
+	save(1180)                       // reading
+	gap := save(1180 + 3600)         // an hour later: a re-seed
+	after := save(1180 + 3600 + 180) // one interval after the re-seed
+	if gap.Admissible.Admissible {
+		t.Fatal("the pass after an hour's gap was taken as a reading")
+	}
+	if !after.Admissible.Admissible {
+		t.Errorf("the pass after the re-seed is still not a reading: %s", after.Admissible.Why)
+	}
+}
