@@ -91,6 +91,14 @@ var stateRules = []stateRule{
 		return items, total, ok
 	}},
 	{RuleDesktopProfile, func(r json.RawMessage) ([]json.RawMessage, *int64, bool) {
+		// Two spellings of the same envelope. The seller page moved its
+		// catalogue from state.searchData to loaderData.searchData between
+		// 23 August and 11 October 2026; from then every shop pass went
+		// through the shape probe, warned, and was refused as evidence — so a
+		// shop watch saw its seeding pass and nothing after it, for hours.
+		if items, total, ok := itemsAt(r, "totalCount", "loaderData", "searchData", "profileCatalog"); ok {
+			return items, total, ok
+		}
 		return itemsAt(r, "totalCount", "state", "searchData", "profileCatalog")
 	}},
 }
@@ -150,8 +158,16 @@ func extractDesktopState(d Document) (Page, bool) {
 
 	page.Kind = EnvelopeCatalog
 	page.Report.Rule = rule
-	page.Report.Found = len(raw)
 	for _, item := range raw {
+		// The catalogue carries the site's own banners among the listings
+		// ({"type":"banner","code":"context_4"}). They are not listings that
+		// failed to read; counting them as dropped warned on every page that
+		// had one, and a warning makes a pass non-evidential — measured on
+		// 11 October 2026, every rental and car-dealer pass refused, for hours.
+		if !isListingItem(item) {
+			continue
+		}
+		page.Report.Found++
 		l, ok := decodeStateListing(item, &page.Report)
 		if !ok {
 			page.Report.Dropped++
@@ -472,4 +488,17 @@ func brandSlug(link string) string {
 		return ""
 	}
 	return trimQuery(strings.TrimPrefix(link, prefix))
+}
+
+// isListingItem says whether a catalogue element is a listing at all. An
+// element with no type is read as one, as every element was before types
+// appeared on the page.
+func isListingItem(raw json.RawMessage) bool {
+	var head struct {
+		Type string `json:"type"`
+	}
+	if json.Unmarshal(raw, &head) != nil {
+		return true
+	}
+	return head.Type == "" || head.Type == "item"
 }
