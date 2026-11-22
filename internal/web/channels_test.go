@@ -324,3 +324,26 @@ func TestARotatingChannelNeedsBothItsHalves(t *testing.T) {
 
 // threeProxies is a list of three, one per line.
 const threeProxies = "10.0.0.1:1080\n10.0.0.2:1080\n10.0.0.3:1080\n"
+
+// TestAListLinkIsShownWithoutItsKey.
+//
+// A provider's list link carries the account key in its query
+// (…getFile&order=…&key=…). The card showed it whole, so anybody who could open
+// the panel, or a screenshot of it, could fetch the list and use the account.
+func TestAListLinkIsShownWithoutItsKey(t *testing.T) {
+	s := newServer(t)
+	rec := post(t, s, "/channels", url.Values{
+		"kind": {"proxy-list"}, "name": {"провайдер"},
+		"source": {"https://cabinet.example/api.php?action=getFile&order=42&key=s3cr3tvalue"},
+	})
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("POST /channels = %d: %s", rec.Code, rec.Body.String())
+	}
+	page := get(t, s, "/channels").Body.String()
+	if strings.Contains(page, "s3cr3tvalue") {
+		t.Error("the list link is shown with its key")
+	}
+	if !strings.Contains(page, "action=getFile&amp;order=42&amp;key=***") {
+		t.Errorf("the link is not shown with the key masked: %s", page)
+	}
+}

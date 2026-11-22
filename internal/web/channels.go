@@ -139,7 +139,9 @@ func (s *Server) channelCard(c store.Channel, addresses int) string {
 				`сколько их, покажет «Проверить».</p>`)
 		}
 		if c.Source != "" {
-			fmt.Fprintf(&b, `<p class="hint">Источник: %s</p>`, esc(c.Source))
+			// Redacted: a provider's list link carries the account key in its
+			// query, and this card is on every screenshot of the screen.
+			fmt.Fprintf(&b, `<p class="hint">Источник: %s</p>`, esc(blanktrail.Redact(c.Source)))
 		}
 	case "rotating":
 		b.WriteString(`<p>Один адрес за раз, меняется по ссылке провайдера.</p>`)
