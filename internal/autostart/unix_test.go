@@ -111,3 +111,17 @@ func TestEntryPath_IsNotTheDesktopAutostartDirectory(t *testing.T) {
 		t.Errorf("entry = %q, want a systemd user unit", path)
 	}
 }
+
+func TestEntryText_QuotesAnArgumentWithASpace(t *testing.T) {
+	if runtime.GOOS == "darwin" {
+		t.Skip("a plist carries each argument in its own <string>")
+	}
+	// systemd splits ExecStart on spaces. A database under «/home/ivan/My
+	// Monitor» would reach the panel as two arguments.
+	text := entryText(Command{Exe: "/opt/avitomon/avitomon",
+		Args: []string{"panel", "-db", "/home/ivan/My Monitor/avito.db"}})
+	want := `ExecStart="/opt/avitomon/avitomon" "panel" "-db" "/home/ivan/My Monitor/avito.db"`
+	if !strings.Contains(text, want) {
+		t.Errorf("entry:\n%s\nwant a line %s", text, want)
+	}
+}

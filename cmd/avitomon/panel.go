@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -52,7 +53,7 @@ func panelCmd(args []string) error {
 	abs, _ := filepath.Abs(*dbPath)
 	blanktrail.SetOwner("avitomon", blanktrail.OwnerOf(host, abs))
 
-	srv := buildPanel(s)
+	srv := buildPanel(s, osAutostart{db: abs, port: *port})
 	// What the screens say about collection comes from the collector itself,
 	// not from the age of the last pass: «собирает 5 из 5» over a collector
 	// that never started was the lie this replaces.
@@ -126,7 +127,7 @@ func panelCmd(args []string) error {
 // that package's tests need no network, no licensed proxy and no registry. This
 // function is where the product differs from the suite, and it is deliberately
 // the only place.
-func buildPanel(s *store.Store) *web.Server {
+func buildPanel(s *store.Store, start osAutostart) *web.Server {
 	srv := &web.Server{Store: s, Now: time.Now}
 
 	// The replay behind «Это не перепубликация». The panel does the pin and the
@@ -174,20 +175,27 @@ func buildPanel(s *store.Store) *web.Server {
 	srv.CheckChannel = func(ctx context.Context, id int64) (string, error) {
 		return checkChannel(ctx, s, id)
 	}
-
-	srv.Autostart = osAutostart{}
+	srv.Autostart = start
 	return srv
 }
 
 // osAutostart is this platform's start-at-login entry, as internal/web wants it.
-type osAutostart struct{}
+//
+// It carries the database and the port this panel runs with. An entry that
+// said only «panel» would open avito.db wherever the login session happens to
+// start, which is not the folder the person set the monitor up in: at the next
+// login a fresh empty monitor would come up and the real one would not.
+type osAutostart struct {
+	db   string
+	port int
+}
 
 func (osAutostart) Enabled() (bool, error) { return autostart.Enabled() }
 
-func (osAutostart) Enable() error {
+func (a osAutostart) Enable() error {
 	// The panel command, not the bare binary: an entry that started the process
 	// with no arguments would start something that prints usage and exits.
-	c, err := autostart.Self("panel")
+	c, err := autostart.Self(a.args()...)
 	if err != nil {
 		return err
 	}
@@ -195,3 +203,8 @@ func (osAutostart) Enable() error {
 }
 
 func (osAutostart) Disable() error { return autostart.Disable() }
+
+// args is the command line the entry starts the panel with.
+func (a osAutostart) args() []string {
+	return []string{"panel", "-db", a.db, "-port", strconv.Itoa(a.port)}
+}

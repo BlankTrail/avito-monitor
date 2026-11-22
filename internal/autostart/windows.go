@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"golang.org/x/sys/windows/registry"
 )
@@ -100,8 +101,10 @@ func Enabled() (bool, error) {
 func commandLine(c Command) string {
 	var b strings.Builder
 	b.WriteString(`"` + c.Exe + `"`)
+	// Arguments go through the same rules the process will parse them by: the
+	// database is named by its full path, and a profile folder has spaces.
 	for _, a := range c.Args {
-		b.WriteString(" " + a)
+		b.WriteString(" " + syscall.EscapeArg(a))
 	}
 	return b.String()
 }

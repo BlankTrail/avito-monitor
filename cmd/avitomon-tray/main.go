@@ -16,6 +16,8 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
 
 	"github.com/BlankTrail/avito-monitor/internal/tray"
 )
@@ -24,6 +26,18 @@ func main() {
 	port := flag.Int("port", 8765, "порт панели")
 	db := flag.String("db", "avito.db", "файл базы")
 	flag.Parse()
+	// The tray takes no command. Anything left over is somebody starting it the
+	// way they start avitomon, and a tray that went on regardless would start a
+	// panel child that is another tray, and so on without end.
+	if flag.NArg() > 0 {
+		fmt.Fprintf(os.Stderr, "avitomon-tray не принимает команд (%q): это значок над «avitomon panel»\n", flag.Arg(0))
+		os.Exit(2)
+	}
+	bin, err := panelBinary()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
 
 	ctx, stop := context.WithCancel(context.Background())
 	defer stop()
@@ -34,7 +48,7 @@ func main() {
 	// open — would go nowhere at all. A child keeps its own handles and can be
 	// pointed at a log; and if the panel wedges, the icon is still answering
 	// and can still stop it.
-	panel := exec.CommandContext(ctx, self(), "panel",
+	panel := exec.CommandContext(ctx, bin, "panel",
 		"-db", *db, "-port", fmt.Sprint(*port))
 	panel.Stdout, panel.Stderr = os.Stdout, os.Stderr
 	if err := panel.Start(); err != nil {
@@ -52,7 +66,7 @@ func main() {
 	// Away from Windows this answers ErrUnsupported straight away, which is
 	// the right shape: the platform file says so once and this binary needs no
 	// build tag of its own.
-	err := tray.Run(ctx, tray.Config{
+	err = tray.Run(ctx, tray.Config{
 		Tip:       "Avito Monitor — " + url,
 		OpenLabel: "Открыть панель",
 		QuitLabel: "Выход",
@@ -68,12 +82,35 @@ func main() {
 	}
 }
 
-// self is this binary's path, so the child is the same build.
-func self() string {
-	if p, err := os.Executable(); err == nil {
-		return p
+// panelBinary is the avitomon program lying next to this one. The panel is
+// avitomon's command and not the tray's: the tray started as its own child
+// was a tray starting trays, one more every time the last one came up.
+func panelBinary() (string, error) {
+	self, err := os.Executable()
+	if err != nil {
+		return "", fmt.Errorf("не удалось найти себя: %w", err)
 	}
-	return "avitomon"
+	return siblingPanel(self, func(p string) bool {
+		st, err := os.Stat(p)
+		return err == nil && !st.IsDir()
+	})
+}
+
+// siblingPanel names avitomon in the folder of self, and refuses a path that
+// is self or is missing.
+func siblingPanel(self string, exists func(string) bool) (string, error) {
+	name := "avitomon"
+	if strings.EqualFold(filepath.Ext(self), ".exe") {
+		name += ".exe"
+	}
+	bin := filepath.Join(filepath.Dir(self), name)
+	if strings.EqualFold(filepath.Clean(bin), filepath.Clean(self)) {
+		return "", fmt.Errorf("значок назван так же, как монитор (%s): переименуйте его в avitomon-tray", self)
+	}
+	if !exists(bin) {
+		return "", fmt.Errorf("рядом со значком нет монитора: положите %s в %s", name, filepath.Dir(self))
+	}
+	return bin, nil
 }
 
 // open shows the panel in whatever the person uses to look at web pages.

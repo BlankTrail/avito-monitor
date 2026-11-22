@@ -29,7 +29,7 @@ func openPanelStore(t *testing.T) *store.Store {
 // answers «эта сборка не умеет». That is right for a test and wrong for the
 // product, so this asserts the wiring fills them in.
 func TestTheWiringSuppliesEveryCheckTheScreensNeed(t *testing.T) {
-	s := buildPanel(openPanelStore(t))
+	s := buildPanel(openPanelStore(t), osAutostart{db: "avito.db", port: 8765})
 	if s.CheckBlankTrail == nil {
 		t.Error("CheckBlankTrail is not wired")
 	}
@@ -57,7 +57,7 @@ func TestThePanelRefusesTheLanBeforeItOpensAPort(t *testing.T) {
 	if err := st.SetPanelSettings(ctx, store.PanelSettings{LAN: true}); err != nil {
 		t.Fatal(err)
 	}
-	s := buildPanel(st)
+	s := buildPanel(st, osAutostart{db: "avito.db", port: 8765})
 	if _, err := s.ListenAddress(ctx, 8080, true); !errors.Is(err, web.ErrWouldExposeUnprotectedPanel) {
 		t.Errorf("err = %v, want the refusal", err)
 	}
@@ -88,7 +88,7 @@ func TestTheChannelCheckAsksTheExitAndNamesAFailure(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	_, err = buildPanel(st).CheckChannel(ctx, id)
+	_, err = buildPanel(st, osAutostart{db: "avito.db", port: 8765}).CheckChannel(ctx, id)
 	if err == nil {
 		t.Fatal("an exit nothing answers on passed the check")
 	}
@@ -108,7 +108,17 @@ func TestAChannelWithNoAddressesSaysSo(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := buildPanel(st).CheckChannel(ctx, id); err == nil {
+	if _, err := buildPanel(st, osAutostart{db: "avito.db", port: 8765}).CheckChannel(ctx, id); err == nil {
 		t.Error("an empty channel reported itself as fine")
+	}
+}
+
+func TestAutostart_StartsThePanelOnItsOwnDatabase(t *testing.T) {
+	// At login the working directory is the home folder, not the folder the
+	// monitor was set up in: an entry without -db opens a new empty avito.db.
+	a := osAutostart{db: `C:\Мониторинг\avito.db`, port: 8790}
+	got := strings.Join(a.args(), " ")
+	if got != `panel -db C:\Мониторинг\avito.db -port 8790` {
+		t.Errorf("args = %q", got)
 	}
 }

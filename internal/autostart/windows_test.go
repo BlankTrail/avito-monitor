@@ -107,3 +107,17 @@ func TestTheEntryRoundTripsThroughTheRealRegistry(t *testing.T) {
 		t.Errorf("повторное снятие: %v", err)
 	}
 }
+
+func TestCommandLine_QuotesAnArgumentWithASpace(t *testing.T) {
+	// The entry names the database by its full path, and a profile folder
+	// can have a space in it. Unquoted, Windows hands the panel two arguments
+	// and the panel opens a database called «C:\Users\Иван».
+	got := commandLine(Command{
+		Exe:  `C:\avitomon\avitomon.exe`,
+		Args: []string{"panel", "-db", `C:\Users\Иван Петров\avito.db`},
+	})
+	want := `"C:\avitomon\avitomon.exe" panel -db "C:\Users\Иван Петров\avito.db"`
+	if got != want {
+		t.Errorf("command line = %q, want %q", got, want)
+	}
+}

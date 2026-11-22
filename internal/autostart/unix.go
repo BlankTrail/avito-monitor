@@ -121,9 +121,11 @@ func entryText(c Command) string {
 `
 	}
 
-	exec := c.Exe
+	// Every word quoted: systemd splits ExecStart on spaces, and the database
+	// is named by its full path.
+	exec := systemdQuote(c.Exe)
 	for _, a := range c.Args {
-		exec += " " + a
+		exec += " " + systemdQuote(a)
 	}
 	// default.target, not multi-user.target: this is a user unit, and
 	// multi-user.target is a system target a user unit can never reach — the
@@ -143,4 +145,14 @@ WantedBy=default.target
 func xmlEscape(s string) string {
 	r := strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;")
 	return r.Replace(s)
+}
+
+// systemdQuote makes one ExecStart word of s. Inside double quotes systemd
+// takes a backslash as an escape, so a backslash and a quote are escaped, and
+// a percent sign is doubled because systemd expands %h and its kin even there.
+func systemdQuote(s string) string {
+	s = strings.ReplaceAll(s, `\`, `\`)
+	s = strings.ReplaceAll(s, `"`, `\"`)
+	s = strings.ReplaceAll(s, `%`, `%%`)
+	return `"` + s + `"`
 }
