@@ -7,8 +7,8 @@
 **Avito Monitor** по расписанию читает выдачу Авито и страницы магазинов,<br>
 хранит историю у вас и присылает в Telegram только то, что изменилось.
 
-[![Собрать из исходников](https://img.shields.io/badge/Собрать-из_исходников-8B2CF5?style=for-the-badge&logo=go&logoColor=white)](#быстрый-старт)
-[![Windows, macOS, Linux](https://img.shields.io/badge/Windows_%7C_macOS_%7C_Linux-сервер_24%2F7-24243E?style=for-the-badge)](#работа-на-сервере)
+[![Скачать для Windows](https://img.shields.io/badge/Скачать-Windows_10%2F11-8B2CF5?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/BlankTrail/avito-monitor/releases/latest/download/avitomon-windows-amd64.zip)
+[![Все версии](https://img.shields.io/badge/macOS_%7C_Linux-Все_версии-24243E?style=for-the-badge)](https://github.com/BlankTrail/avito-monitor/releases/latest)
 [![Лицензия](https://img.shields.io/badge/Open_source-AGPL--3.0-126C60?style=for-the-badge)](LICENSE)
 
 **Выдача по поиску · Магазины конкурентов · История цен · Перепубликации · Telegram · CSV / XLSX / JSON**
@@ -51,9 +51,33 @@
 
 ## Быстрый старт
 
-Нужен **Go 1.26** или новее. Готовых сборок пока нет, но программа собирается одной командой и не требует компилятора C: база SQLite написана на чистом Go.
+Готовые сборки не требуют ни Go, ни компилятора, ни установки.
 
-### 1. Соберите программу
+### 1. Скачайте программу
+
+| Ваша система | Архив |
+|---|---|
+| **Windows, обычный ПК** | **[avitomon-windows-amd64.zip](https://github.com/BlankTrail/avito-monitor/releases/latest/download/avitomon-windows-amd64.zip)** |
+| Windows на ARM | [avitomon-windows-arm64.zip](https://github.com/BlankTrail/avito-monitor/releases/latest/download/avitomon-windows-arm64.zip) |
+| Linux, обычный ПК или сервер | [avitomon-linux-amd64.tar.gz](https://github.com/BlankTrail/avito-monitor/releases/latest/download/avitomon-linux-amd64.tar.gz) |
+| Linux на ARM | [avitomon-linux-arm64.tar.gz](https://github.com/BlankTrail/avito-monitor/releases/latest/download/avitomon-linux-arm64.tar.gz) |
+| Mac с Apple silicon (M1 и новее) | [avitomon-macos-apple-silicon.tar.gz](https://github.com/BlankTrail/avito-monitor/releases/latest/download/avitomon-macos-apple-silicon.tar.gz) |
+| Mac с процессором Intel | [avitomon-macos-intel.tar.gz](https://github.com/BlankTrail/avito-monitor/releases/latest/download/avitomon-macos-intel.tar.gz) |
+
+[Все версии](https://github.com/BlankTrail/avito-monitor/releases) · [Контрольные суммы SHA256](https://github.com/BlankTrail/avito-monitor/releases/latest/download/SHA256SUMS.txt)
+
+### 2. Запустите панель
+
+**Windows:** распакуйте архив в отдельную папку и дважды щёлкните `avitomon-tray.exe`. Чёрного окна не будет: в области уведомлений появится значок, его меню — «Открыть панель» и «Выход». `avitomon.exe` должен лежать рядом: значок запускает именно его.
+
+**Linux / macOS:** распакуйте архив и выполните `./start.sh` (или `./avitomon panel`). На macOS при первом запуске может понадобиться разрешить программу в «Системных настройках → Конфиденциальность и безопасность».
+
+Панель: **[http://127.0.0.1:8765](http://127.0.0.1:8765)**. База — файл `avito.db` рядом с программой; другой файл и порт задаются флагами `-db` и `-port`. Сбор идёт в том же процессе, что и панель.
+
+<details>
+<summary>Собрать из исходников</summary>
+
+Нужен **Go 1.26** или новее; компилятор C не нужен, SQLite написана на чистом Go.
 
 ```bash
 git clone https://github.com/BlankTrail/avito-monitor.git
@@ -61,22 +85,9 @@ cd avito-monitor
 go build -o avitomon ./cmd/avitomon
 ```
 
-На Windows соберите `avitomon.exe`, а если нужен значок в области уведомлений — ещё и `avitomon-tray.exe` в ту же папку:
+Значок для Windows: `go build -ldflags=-H=windowsgui -o avitomon-tray.exe ./cmd/avitomon-tray`.
 
-```bash
-go build -o avitomon.exe ./cmd/avitomon
-go build -ldflags=-H=windowsgui -o avitomon-tray.exe ./cmd/avitomon-tray
-```
-
-### 2. Запустите панель
-
-```bash
-./avitomon panel
-```
-
-Панель: **[http://127.0.0.1:8765](http://127.0.0.1:8765)**. База создаётся в файле `avito.db` в текущей папке; другой файл и порт задаются флагами `-db` и `-port`. Сбор идёт в том же процессе, что и панель.
-
-На Windows можно запускать `avitomon-tray.exe`: он поднимет панель без чёрного окна, а в меню значка будут «Открыть панель» и «Выход».
+</details>
 
 ### 3. Выберите, как выходить в сеть
 
