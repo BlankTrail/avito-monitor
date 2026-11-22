@@ -74,12 +74,6 @@ func notifyCmd(args []string) error {
 }
 
 // buildLadder assembles the delivery ladder from what is configured.
-//
-// MTProto is deliberately absent from the default ladder. Its live exchange has
-// not been verified against real Telegram — see docs/measurements/ — and a
-// delivery path nobody has seen work is worse than an absent one, because the
-// settings screen would offer it and somebody would rely on it. `-rung mtproto`
-// is how it gets tried, which is the verification itself.
 func buildLadder(ctx context.Context, s *store.Store, only string) (*telegram.Ladder, error) {
 	cfg, err := s.TelegramConfig(ctx)
 	if err != nil {
@@ -90,20 +84,44 @@ func buildLadder(ctx context.Context, s *store.Store, only string) (*telegram.La
 	if v := os.Getenv(tokenEnv); v != "" {
 		cfg.BotToken = v
 	}
+	rungs, err := telegramRungs(cfg, s.MTProtoSessionStore(), only)
+	if err != nil {
+		return nil, err
+	}
+	return &telegram.Ladder{Rungs: rungs}, nil
+}
 
-	var rungs []telegram.Sender
+// telegramRungs is the ladder's rungs, in the order they are tried.
+//
+// By default the Bot API, and behind it MTProto once the my.telegram.org pair
+// is set. The settings screen asks for that pair exactly when the Bot API has
+// failed, so a ladder without MTProto would store the pair and go on failing:
+// the messages would wait for an api.telegram.org that this network cannot
+// reach, while the route the person configured for it stood unused. Without
+// the pair the rung is left out rather than added to fail, because «mtproto:
+// не настроен» would then be part of every error about a Bot API that is
+// simply down.
+//
+// `-rung bot-api` or `-rung mtproto` asks for one rung alone, which is how
+// either is tried on its own.
+func telegramRungs(cfg store.TelegramConfig, session telegram.SessionStore, only string) ([]telegram.Sender, error) {
+	bot := telegram.NewBot(cfg.BotToken, nil)
+	mt := telegram.NewMTProto(telegram.MTConfig{
+		APIID: cfg.APIID, APIHash: cfg.APIHash, BotToken: cfg.BotToken, Session: session,
+	})
 	switch strings.ToLower(only) {
-	case "", "bot-api":
-		rungs = append(rungs, telegram.NewBot(cfg.BotToken, nil))
+	case "":
+		if cfg.APIID != 0 && cfg.APIHash != "" {
+			return []telegram.Sender{bot, mt}, nil
+		}
+		return []telegram.Sender{bot}, nil
+	case "bot-api":
+		return []telegram.Sender{bot}, nil
 	case "mtproto":
-		rungs = append(rungs, telegram.NewMTProto(telegram.MTConfig{
-			APIID: cfg.APIID, APIHash: cfg.APIHash, BotToken: cfg.BotToken,
-			Session: s.MTProtoSessionStore(),
-		}))
+		return []telegram.Sender{mt}, nil
 	default:
 		return nil, fmt.Errorf("способ %q эта сборка не знает: bot-api или mtproto", only)
 	}
-	return &telegram.Ladder{Rungs: rungs}, nil
 }
 
 // targetCmd manages who gets told.

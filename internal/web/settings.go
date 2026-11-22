@@ -408,9 +408,23 @@ func (s *Server) checkTelegram(w http.ResponseWriter, r *http.Request) {
 	name, err := s.CheckTelegram(r.Context(), cfg.BotToken)
 	if err != nil {
 		s.botAPIFailed.Store(true)
-		writeFragment(w, note("bad",
-			"Не отвечает: "+redactSecret(err.Error(), cfg.BotToken)+
-				" Перезагрузите страницу — появятся поля для MTProto."))
+		botErr := redactSecret(err.Error(), cfg.BotToken)
+		if cfg.APIID == 0 || cfg.APIHash == "" || s.CheckMTProto == nil {
+			writeFragment(w, note("bad",
+				"Не отвечает: "+botErr+
+					" Перезагрузите страницу — появятся поля для MTProto."))
+			return
+		}
+		// The pair is set, so the messages would go by MTProto: say whether
+		// they will, rather than leave the Bot API's failure as the answer.
+		if mtErr := s.CheckMTProto(r.Context()); mtErr != nil {
+			writeFragment(w, note("bad",
+				"Bot API не отвечает: "+botErr+" MTProto тоже не отвечает: "+
+					redactSecret(redactSecret(mtErr.Error(), cfg.BotToken), cfg.APIHash)))
+			return
+		}
+		writeFragment(w, note("neutral",
+			"Bot API не отвечает ("+botErr+"), но MTProto отвечает — сообщения пойдут через него."))
 		return
 	}
 	writeFragment(w, note("neutral", "Отвечает: @"+name))

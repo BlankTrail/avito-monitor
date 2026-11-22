@@ -100,6 +100,11 @@ type Server struct {
 	// wiring built.
 	CheckTelegram func(ctx context.Context, token string) (username string, err error)
 
+	// CheckMTProto logs the bot in over MTProto with the stored pair. Asked
+	// only when the Bot API has failed and the pair is set: that is when the
+	// messages would go by it.
+	CheckMTProto func(ctx context.Context) error
+
 	// Gateways lists what the licensed proxy has configured, so a gateway is
 	// picked from what exists rather than typed from memory.
 	Gateways func(ctx context.Context) (blanktrail.GatewayList, error)

@@ -366,3 +366,34 @@ func TestATickedBoxIsActuallyTicked(t *testing.T) {
 		t.Error("unticking the box left the setting on")
 	}
 }
+
+// TestWhenTheBotApiFailsTheCheckTriesMTProto.
+//
+// The pair was asked for and then never used: «Проверить» said only that the
+// Bot API was down, and nothing told the person whether the pair they typed
+// would carry the messages.
+func TestWhenTheBotApiFailsTheCheckTriesMTProto(t *testing.T) {
+	s := newServer(t)
+	if err := s.Store.SetTelegramConfig(context.Background(),
+		store.TelegramConfig{BotToken: "123:AAH", APIID: 12345, APIHash: "abc"}); err != nil {
+		t.Fatal(err)
+	}
+	s.CheckTelegram = func(context.Context, string) (string, error) {
+		return "", errors.New("api.telegram.org недоступен")
+	}
+	asked := false
+	s.CheckMTProto = func(context.Context) error { asked = true; return nil }
+	body := get(t, s, "/settings/telegram").Body.String()
+	if !asked {
+		t.Fatal("MTProto was not tried")
+	}
+	if !strings.Contains(body, "MTProto отвечает") {
+		t.Errorf("the check does not say MTProto will carry the messages: %s", body)
+	}
+
+	s.CheckMTProto = func(context.Context) error { return errors.New("AUTH_KEY_UNREGISTERED") }
+	body = get(t, s, "/settings/telegram").Body.String()
+	if !strings.Contains(body, "AUTH_KEY_UNREGISTERED") || !strings.Contains(body, "api.telegram.org") {
+		t.Errorf("a double failure does not name both: %s", body)
+	}
+}

@@ -156,6 +156,17 @@ func buildPanel(s *store.Store, start osAutostart) *web.Server {
 	srv.CheckTelegram = func(ctx context.Context, token string) (string, error) {
 		return telegram.NewBot(token, nil).GetMe(ctx)
 	}
+	srv.CheckMTProto = func(ctx context.Context) error {
+		cfg, err := s.TelegramConfig(ctx)
+		if err != nil {
+			return err
+		}
+		rungs, err := telegramRungs(cfg, s.MTProtoSessionStore(), "mtproto")
+		if err != nil {
+			return err
+		}
+		return rungs[0].Check(ctx)
+	}
 
 	srv.Gateways = func(ctx context.Context) (blanktrail.GatewayList, error) {
 		cfg, err := s.BlankTrailConfig(ctx)

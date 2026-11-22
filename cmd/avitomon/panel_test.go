@@ -36,6 +36,9 @@ func TestTheWiringSuppliesEveryCheckTheScreensNeed(t *testing.T) {
 	if s.CheckTelegram == nil {
 		t.Error("CheckTelegram is not wired")
 	}
+	if s.CheckMTProto == nil {
+		t.Error("CheckMTProto is not wired")
+	}
 	if s.Gateways == nil {
 		t.Error("Gateways is not wired")
 	}
